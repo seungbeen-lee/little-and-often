@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `subsection` text DEFAULT '' NOT NULL;

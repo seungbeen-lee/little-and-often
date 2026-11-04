@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `memo` text DEFAULT '' NOT NULL;

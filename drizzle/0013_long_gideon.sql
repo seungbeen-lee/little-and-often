@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `content_type` text DEFAULT '기타' NOT NULL;

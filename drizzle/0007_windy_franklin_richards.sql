@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `correct_streak` integer DEFAULT 0 NOT NULL;

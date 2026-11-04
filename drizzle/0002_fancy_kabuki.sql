@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `answer_format` text DEFAULT '' NOT NULL;

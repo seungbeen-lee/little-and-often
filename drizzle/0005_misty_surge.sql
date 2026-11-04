@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `detail_section` text DEFAULT '' NOT NULL;
