@@ -6047,7 +6047,7 @@ export function rememberHintScroll(root: HTMLElement | null) {
   };
 }
 
-export function revealInputInsideCloze(input: HTMLInputElement) {
+export function revealInputInsideCloze(input: HTMLInputElement, smooth = false) {
   if (revealMobileStudyInput(input)) return;
   const tableScroller=input.closest?.<HTMLElement>(".answer-table-scroll");
   if(tableScroller?.classList?.contains("answer-table-scroll")) {
@@ -6061,17 +6061,26 @@ export function revealInputInsideCloze(input: HTMLInputElement) {
   if (!box || box.scrollHeight <= box.clientHeight) return;
   const frame = box.getBoundingClientRect(), field = input.getBoundingClientRect();
   const top = frame.top + box.clientTop + 6, bottom = frame.top + box.clientTop + box.clientHeight - 6;
-  if (field.top < top) box.scrollTop += field.top - top;
-  else if (field.bottom > bottom) box.scrollTop += field.bottom - bottom;
+  const delta = field.top < top ? field.top - top : field.bottom > bottom ? field.bottom - bottom : 0;
+  if (smooth) {
+    const animated = delta && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    box.scrollTo({ top: box.scrollTop + delta, behavior: animated ? "smooth" : "instant" });
+  } else if (delta) {
+    box.scrollTop += delta;
+  }
 }
 
-export function focusQuizInputAtEnd(input: HTMLInputElement | null | undefined) {
+export function focusQuizInputAtEnd(input: HTMLInputElement | null | undefined, smooth = false) {
   if (!input || !input.isConnected || input.disabled) return false;
   input.focus({ preventScroll: true });
   input.setSelectionRange(input.value.length, input.value.length);
+  if (smooth) deferMobileAnswerScroll(input, 0);
   if (revealMobileStudyInput(input)) return true;
-  if (input.closest?.(".study-keyword-attempt")) revealInputInsideCloze(input);
-  else input.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  if (input.closest?.(".study-keyword-attempt") || (smooth && input.closest?.(".quiz-answer-panel"))) {
+    revealInputInsideCloze(input, smooth);
+  } else {
+    input.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }
   return true;
 }
 
@@ -6271,7 +6280,7 @@ export function QuizCloze({
     const input = referencedInput?.isConnected
       ? referencedInput
       : clozeRootRef.current?.querySelector<HTMLInputElement>(`input[data-cloze-index="${index}"]`) ?? null;
-    return focusQuizInputAtEnd(input);
+    return focusQuizInputAtEnd(input, !table);
   };
 
   const focusAvailableInput = (startIndex: number, direction: 1 | -1) => {

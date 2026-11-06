@@ -189,8 +189,46 @@ try {
       [["복숭아", "배", "사과"].sort(), ["배", "사과"].sort(), ["사과"]]);
     assert.deepEqual(keywordAttempts.filter(r => r.cardId === 2).at(-1).results, [{ keyword: "연필", keywordKey: "table:c2", matched: true }]);
     assert.deepEqual(bookmarks, []);
+
+    const context = Array(26).fill("문맥을 유지하면서 아래의 핵심 표현을 이어서 확인합니다.").join("\n");
+    cards.push({ ...cards[0], id: 5, question: "긴 카드 스크롤 확인", keywords: ["문해력", "협력"],
+      answer: `문해력\n${context}\n협력`, answerFormat: `[b]문해력[/b]\n${context}\n[b]협력[/b]` });
+    pending.add(5);
+    await page.reload();
+    await page.locator(".subject-tile-incorrect").click();
+    await page.getByRole("button", { name: "오늘 복습", exact: true }).click();
+    await showQuestion("긴 카드 스크롤 확인");
+    const scrollSelector = width <= 759 ? ".study-card" : ".study-keyword-attempt .quiz-cloze-copy";
+    const scroller = page.locator(scrollSelector);
+    await blankAt(0).focus();
+    await scroller.evaluate(node => {
+      const scrollTo = node.scrollTo.bind(node);
+      node.scrollTo = options => {
+        node.dataset.followBehavior = options.behavior;
+        scrollTo(options);
+      };
+    });
+    const pageScroll = await page.evaluate(() => window.scrollY);
+    const waitForFollow = async index => {
+      await page.waitForFunction(({ index, scrollSelector }) => {
+        const scroller = document.querySelector(scrollSelector);
+        const input = document.activeElement;
+        if (input?.getAttribute("data-cloze-index") !== String(index) || scroller?.dataset.followBehavior !== "smooth") return false;
+        const frame = scroller.getBoundingClientRect();
+        const field = input.getBoundingClientRect();
+        return field.top >= frame.top && field.bottom <= Math.min(frame.bottom, window.innerHeight) + 1;
+      }, { index, scrollSelector });
+      await scroller.evaluate(node => { delete node.dataset.followBehavior; });
+    };
+    await page.keyboard.press("ArrowDown");
+    await waitForFollow(1);
+    await page.keyboard.press("ArrowUp");
+    await waitForFollow(0);
+    await fillBlank(0, "문해력");
+    await waitForFollow(1);
+    assert.equal(await page.evaluate(() => window.scrollY), pageScroll);
     assert.deepEqual(errors, []);
     await page.close();
-    console.log(`PASS today review + subject range: ${width}px`);
+    console.log(`PASS today review + subject range + focused blank scroll: ${width}px`);
   }
 } finally { await browser?.close(); await server.close(); }

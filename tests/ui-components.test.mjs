@@ -117,7 +117,7 @@ test("places the caret after existing text whenever quiz navigation focuses an i
   assert.equal(focusQuizInputAtEnd({ isConnected: true, disabled: true }), false);
   const source = await readFile(new URL("../app/study-app.tsx", import.meta.url), "utf8");
   const cloze = source.slice(source.indexOf("export function QuizCloze("), source.indexOf("export function shouldFocusConnectionContinue("));
-  assert.match(cloze, /return focusQuizInputAtEnd\(input\)/);
+  assert.match(cloze, /return focusQuizInputAtEnd\(input, !table\)/);
   assert.doesNotMatch(cloze, /focusAvailableInput\([^\n]*"(?:start|end)"/);
   assert.match(cloze, /event\.key === "Tab"[\s\S]*?event\.shiftKey \? -1 : 1[\s\S]*?if \(focusAvailableInput\(currentIndex \+ direction, direction\)\) event\.preventDefault\(\)/);
 });
@@ -622,7 +622,8 @@ test("hint focus restores ancestor and page positions and scrolls only the inner
   const original = Object.getOwnPropertyDescriptor(globalThis, "window");
   try {
     const page = { scrollTop: 700, scrollLeft: 0, parentElement: null, isConnected: true };
-    const box = { scrollTop: 240, scrollLeft: 15, parentElement: page, isConnected: true, scrollHeight: 900, clientHeight: 200, clientTop: 0, getBoundingClientRect: () => ({ top: 100 }) };
+    const boxScrolls = [];
+    const box = { scrollTop: 240, scrollLeft: 15, parentElement: page, isConnected: true, scrollHeight: 900, clientHeight: 200, clientTop: 0, getBoundingClientRect: () => ({ top: 100 }), scrollTo(options) { boxScrolls.push(options); } };
     const pageScrolls = [];
     globalThis.window = { scrollX: 0, scrollY: 700, scrollTo(options) { pageScrolls.push(options); this.scrollX = options.left; this.scrollY = options.top; } };
     const restore = rememberHintScroll(box);
@@ -637,6 +638,8 @@ test("hint focus restores ancestor and page positions and scrolls only the inner
     rect = { top: 290, bottom: 330 };
     focusQuizInputAtEnd(input);
     assert.equal(box.scrollTop, 276);
+    focusQuizInputAtEnd(input, true);
+    assert.deepEqual(boxScrolls, [{ top: 312, behavior: "smooth" }]);
     assert.equal(window.scrollY, 700);
     const source = await readFile(new URL("../app/study-app.tsx", import.meta.url), "utf8");
     for (const [start, end] of [["  function revealStudyHint(", "  function gradeStudyKeywords("], ["  function revealQuizHint(", "  function resolveQuizAttempt("]]) {

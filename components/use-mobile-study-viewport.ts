@@ -27,14 +27,16 @@ function finishFeedbackScroll(root: HTMLElement) {
 
 /** Move focus immediately to preserve fast typing/iOS keyboard, but let green
  * feedback remain in view briefly before following the new field. */
-export function deferMobileAnswerScroll(node: HTMLElement | null | undefined) {
+export function deferMobileAnswerScroll(node: HTMLElement | null | undefined, delay = ANSWER_FEEDBACK_HOLD_MS) {
   const root = node?.closest<HTMLElement>(".mobile-session-layout");
-  if (!root || !window.matchMedia("(max-width: 759px)").matches) return;
+  if (!root || !window.matchMedia?.("(max-width: 759px)").matches) return;
+  // A navigation request can use the pending scroll from an accepted answer.
+  if (delay === 0 && feedbackScrolls.has(root)) return;
   clearFeedbackScroll(root);
   const pending = { timer: 0, moving: false };
   feedbackScrolls.set(root, pending);
   root.dataset.answerFeedback = "pending";
-  pending.timer = window.setTimeout(() => finishFeedbackScroll(root), ANSWER_FEEDBACK_HOLD_MS);
+  pending.timer = window.setTimeout(() => finishFeedbackScroll(root), delay);
 }
 
 function inputPosition(node: HTMLElement) {
@@ -83,6 +85,9 @@ export function revealMobileStudyInput(node: HTMLElement, smooth = false) {
     const nextTop = scroller.scrollTop + field.top - targetTop;
     if (smooth) scroller.scrollTo({ top: nextTop, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
     else scroller.scrollTop = nextTop;
+  } else if (smooth) {
+    // A second navigation may leave the previous animation in progress.
+    scroller.scrollTo({ top: scroller.scrollTop, behavior: "instant" });
   }
   const horizontal = node.closest<HTMLElement>(".answer-table-scroll");
   if (horizontal) {
