@@ -15,6 +15,33 @@ const vite = await createServer({
 after(() => vite.close());
 const { dailyStudyStats, koreanStudyDay, subjectStudiedToday } = await vite.ssrLoadModule("/lib/daily-study-stats.ts");
 
+test("today review includes unresolved owned mistakes and only a clean whole-card answer clears one", async () => {
+  const { DAILY_REVIEW_QUERY } = await vite.ssrLoadModule("/lib/daily-study-query.ts");
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE cards (id INTEGER PRIMARY KEY, owner_email TEXT, archived_at TEXT);
+      CREATE TABLE reviews (id INTEGER PRIMARY KEY, card_id INTEGER, owner_email TEXT, result TEXT, reviewed_at TEXT, statistics_only INTEGER, hint_used INTEGER, coverage TEXT);
+      INSERT INTO cards VALUES (1,'me',NULL),(2,'me',NULL),(3,'me',NULL),(4,'me',NULL),(5,'me','archived'),(6,'other',NULL);`);
+    const day = koreanStudyDay(new Date("2026-11-06T12:00:00+09:00"));
+    const later = "2026-11-06T10:30:00.000Z";
+    const insert = db.prepare("INSERT INTO reviews (card_id,owner_email,result,reviewed_at,statistics_only,hint_used,coverage) VALUES (?,?,?,?,?,?,?)");
+    for (const id of [1,2,3,5]) insert.run(id,"me","incorrect",day.start,0,0,"full");
+    insert.run(4,"me","incorrect",new Date(Date.parse(day.start)-1).toISOString(),0,0,"full");
+    insert.run(4,"me","incorrect",day.end,0,0,"full");
+    insert.run(6,"other","incorrect",later,0,0,"full");
+    insert.run(1,"me","correct",later,0,0,"full");
+    insert.run(2,"me","correct",later,1,0,"full");
+    insert.run(2,"me","correct",later,0,1,"full");
+    insert.run(2,"me","correct",later,0,0,"partial");
+    insert.run(3,"me","correct",later,0,0,"full");
+    insert.run(3,"me","incorrect",later,1,0,"full");
+    const pending = db.prepare(DAILY_REVIEW_QUERY);
+    assert.deepEqual(pending.all("me",day.start,day.end).map(row=>row.cardId).sort(),[2,3]);
+    insert.run(2,"me","correct",later,0,0,"full");
+    assert.deepEqual(pending.all("me",day.start,day.end).map(row=>row.cardId),[3]);
+  } finally { db.close(); }
+});
+
 test("daily query returns unique owned card IDs for the Korean day, including practice mistakes", async () => {
   const { DAILY_STUDY_QUERY } = await vite.ssrLoadModule("/lib/daily-study-query.ts");
   const db = new DatabaseSync(":memory:");

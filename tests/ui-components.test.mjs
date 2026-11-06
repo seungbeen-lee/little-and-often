@@ -397,7 +397,7 @@ test("bulk Enter follows classification, question, answer, memo without intercep
     globalThis.HTMLElement = class { dataset = { bulkRowId: "card-a" }; };
     const field = new HTMLElement();
     const event = { key: "Enter", target: field, currentTarget: { contains: () => true }, nativeEvent: {} };
-    for (const [kind, destination] of [["content-type", "question"], ["question", "answer"], ["answer", "memo"], ["memo", "new-card"]]) {
+    for (const [kind, destination] of [["content-type", "question"], ["question", "answer"], ["answer", "memo"], ["memo", "new-card"], ["divider", "new-card"]]) {
       field.dataset.bulkFocusKind = kind;
       assert.deepEqual(bulkEnterNavigation(event), { rowId: "card-a", destination });
     }
@@ -407,7 +407,7 @@ test("bulk Enter follows classification, question, answer, memo without intercep
     delete field.dataset.bulkFocusKind;
     assert.equal(bulkEnterNavigation(event), null, "nested buttons and table cells retain Enter");
     field.dataset.bulkFocusKind = "divider";
-    assert.equal(bulkEnterNavigation(event), null, "section editing stays unchanged");
+    assert.deepEqual(bulkEnterNavigation(event), { rowId: "card-a", destination: "new-card" }, "section Enter creates a card using the same guarded navigation");
   } finally {
     if (saved) Object.defineProperty(globalThis, "HTMLElement", saved); else delete globalThis.HTMLElement;
   }
@@ -1771,7 +1771,7 @@ test("pause preserves remaining milliseconds and guards study input, grading and
   for (const name of ["updateStudyKeywordAnswer", "updateStudyConnectionAnswer", "gradeStudyConnection", "gradeStudyKeywords", "showWrittenAnswer", "revealStudyAnswerWithoutKeywords", "record", "finishStudyConnection"]) {
     assert.match(source, new RegExp(`function ${name}\\([^\\n]*\\) \\{\\s*if \\(studyPausedRef.current\\) return;`));
   }
-  assert.match(source, /const timerPaused = !current \|\| studyPaused/);
+  assert.match(source, /const timerPaused = [^;]*!current \|\| studyPaused/);
   assert.match(source, /const updateTimer = \(\) => \{\s*if \(studyPausedRef.current\) return/);
   assert.match(source, /<article inert=\{studyPaused\}/);
   assert.match(source, /disabled=\{answered \|\| studyPaused\}/);
@@ -1815,13 +1815,13 @@ test("study real mode shares quiz timing and every answer review freezes the clo
   const end = normalized.indexOf("  useEffect(() => {\n    if (currentQuizCardId", start);
   assert.ok(end > start);
   const effects = normalized.slice(start, end);
-  for (const mode of ["reveal", "write"]) for (const answered of [false, true]) {
+  for (const mode of ["reveal", "write"]) for (const answered of [false, true]) for (const todayReview of [false, true]) {
     let now = 1000, tick, seconds = 13, grades = 0;
     const remaining = { current: 13_000 }, deadline = { current: null };
     const cleanup = [];
     const scope = {
       useEffect: (callback) => { const stop = callback(); if (stop) cleanup.push(stop); },
-      current: card, answered, currentStudyTimeLimit: 51, mode, studyRound: "main", studySessionMode: "real",
+      current: card, answered, currentStudyTimeLimit: 51, mode, studyRound: todayReview ? "today-review" : "main", studySessionMode: "real", todayReview, todayReviewTurn: 0,
       studyPaused: false, studyConnectionActive: false, studyKeywordMode: mode === "reveal",
       sectionAnnouncement: null, dialogOpen: false, bulkOpen: false, pendingSessionExit: null,
       studyTimerRemainingMsRef: remaining, studyTimerDeadlineRef: deadline,
@@ -1836,6 +1836,8 @@ test("study real mode shares quiz timing and every answer review freezes the clo
       assert.equal(tick, undefined, `${mode} review never starts an interval`);
       assert.equal(remaining.current, 13_000, "review does not reset the remaining time");
       assert.equal(seconds, 13);
+    } else if (todayReview) {
+      assert.equal(tick, undefined, `${mode} today review is untimed`);
     } else {
       assert.equal(seconds, 51);
       now += 2000;
@@ -2094,7 +2096,7 @@ test("set learning toggles selection and starts only the chosen sets", async () 
   assert.equal(calls.setMainTab, "study");
   assert.equal(calls.setSubject, "selected-sets");
   assert.match(source, /setInfo: \{ name: set.name, memo: set.memo \}/);
-  assert.match(source, /remainingStudySequence\(filtered\.map\(\(card\) => card\.id\), startCardId, savedSequence\)/);
+  assert.match(source, /remainingStudySequence\((?:todayIds \?\? )?filtered\.map\(\(card\) => card\.id\), startCardId, savedSequence\)/);
 });
 
 test("each subject has a distinct shade shared by its badge and chooser stripe", async () => {

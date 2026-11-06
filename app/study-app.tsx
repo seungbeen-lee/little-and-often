@@ -64,6 +64,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { extractBoldKeywords, normalizeAnswerFormat, normalizeImportance, normalizeQuestionFormat } from "@/lib/card-data";
 import { dailyAccuracyLabel, koreanStudyDay, subjectStudiedToday, type DailyStudyStats } from "@/lib/daily-study-stats";
+import { advanceTodayReview } from "@/lib/today-review";
 import { CARD_CONTENT_TYPES, DEFAULT_CARD_CONTENT_TYPE, normalizeCardContentType, type CardContentType } from "@/lib/card-content-types";
 import { archiveReviewDueAt, isArchiveReviewDue, nextArchiveReviewStage, nextReviewProgress } from "@/lib/archive-schedule";
 import { SITE_NAME } from "@/lib/site-branding";
@@ -142,7 +143,7 @@ type StudySet = {
 type StudyMode = "reveal" | "write";
 type FlowSetStep = "idle" | "select" | "details";
 type StudySessionMode = "real" | "practice";
-type StudyRound = "main" | "mistake-review";
+type StudyRound = "main" | "mistake-review" | "today-review";
 type StudyRecordReason = "manual" | "question-timeout";
 type SectionPath = Pick<StudyCard, "section" | "subsection" | "detailSection">;
 type MobileFlowLevel = "section" | "subsection" | "detail";
@@ -300,7 +301,7 @@ export function learningCardIdsForSection(cards: StudyCard[], cardId: number, le
   if (!anchor) return [];
 
   const matches = (card: StudyCard) => {
-    if (card.section !== anchor.section) return false;
+    if (card.subject !== anchor.subject || card.section !== anchor.section) return false;
     if (level === "section") return true;
     if (card.subsection !== anchor.subsection) return false;
     if (level === "subsection") return true;
@@ -3413,7 +3414,7 @@ export function bulkEnterNavigation(event: React.KeyboardEvent<HTMLElement>): { 
   if (!field || !event.currentTarget.contains(field) || !field.dataset.bulkRowId) return null;
   const kind = field.dataset.bulkFocusKind;
   const destination = kind === "content-type" ? "question" : kind === "question" ? "answer"
-    : kind === "answer" ? "memo" : kind === "memo" ? "new-card" : null;
+    : kind === "answer" ? "memo" : kind === "memo" || kind === "divider" ? "new-card" : null;
   return destination ? { rowId: field.dataset.bulkRowId, destination } : null;
 }
 
@@ -4018,9 +4019,14 @@ export function BulkCreateDialog({
     if (!navigation) return;
     const rowIndex = rows.findIndex(row => row.id === navigation.rowId);
     const row = rows[rowIndex];
-    if (!row || row.type !== "card") return;
+    if (!row) return;
     event.preventDefault();
     event.stopPropagation();
+    if (row.type === "divider") {
+      setCollapsedDividerIds(previous => { const next = new Set(previous); next.delete(row.id); return next; });
+      insertCardAt(rowIndex + 1);
+      return;
+    }
     if (navigation.destination === "new-card") continueFromMemo(rowIndex, row.contentType);
     else focusBulkField(navigation.destination, row.id);
   }
@@ -6058,6 +6064,7 @@ export function QuizCloze({
   hints = {},
   matchFeedback = false,
   correctionMode = false,
+  studyReview = false,
   guidedPractice = false,
   revealedKeywords = [],
   onChange,
@@ -6078,6 +6085,7 @@ export function QuizCloze({
   hints?: QuizCardHints;
   matchFeedback?: boolean;
   correctionMode?: boolean;
+  studyReview?: boolean;
   guidedPractice?: boolean;
   revealedKeywords?: string[];
   onChange: (index: number, value: string) => void;
@@ -6123,6 +6131,40 @@ export function QuizCloze({
   const blankNumber = (index: number) => table ? mobileBlankOrder.indexOf(index) + 1 : index + 1;
   const lastMobileBlankIndex = mobileBlankOrder.at(-1);
   const allKeywordsMatched = evaluations.length > 0 && evaluations.every((item) => item.matched);
+  const studyReviewTypography = studyReview && !table && (checked || correctionMode);
+
+  useLayoutEffect(() => {
+    const copy = clozeRootRef.current;
+    if (!studyReviewTypography || !copy) return;
+    const desktop = window.matchMedia("(min-width: 760px)");
+    const reset = () => {
+      copy.style.removeProperty("--study-review-size");
+      copy.style.removeProperty("--study-review-leading");
+    };
+    const fit = () => {
+      reset();
+      const fits = () => copy.scrollHeight <= copy.clientHeight + 1;
+      if (!desktop.matches || !copy.clientHeight || fits()) return;
+      // Preserve a consistent size if tightening line spacing is enough.
+      copy.style.setProperty("--study-review-leading", "1.58");
+      for (const size of [17, 16]) {
+        if (fits()) break;
+        copy.style.setProperty("--study-review-size", `${size}px`);
+      }
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(copy);
+    desktop.addEventListener("change", fit);
+    let active = true;
+    void document.fonts?.ready.then(() => { if (active) fit(); });
+    return () => {
+      active = false;
+      observer.disconnect();
+      desktop.removeEventListener("change", fit);
+      reset();
+    };
+  }, [studyReviewTypography, card.id, card.answerFormat, card.answer]);
 
   const showGuide = correctionMode || guidedPractice;
   // Corrected/partial attempts replace completed slots with fixed text. Include
@@ -6510,7 +6552,7 @@ export function QuizCloze({
     if(next !== undefined) focusInput(next);
     else { mobileInputRefs.current[activeIndex]?.blur(); setActiveMobileIndex(null); }
   };
-  return <div ref={clozeRootRef} onScroll={table ? (event) => { tableScrollTopRef.current = event.currentTarget.scrollTop; } : undefined} className={`quiz-cloze-copy${table ? " is-table-cloze" : ""}`}>{table ? <TableGrid doc={table} renderCell={(cell) => <>{renderedParts.filter((_,index) => parts[index].cellId === cell.id)}</>}/> : renderedParts}</div>;
+  return <div ref={clozeRootRef} onScroll={table ? (event) => { tableScrollTopRef.current = event.currentTarget.scrollTop; } : undefined} className={`quiz-cloze-copy${table ? " is-table-cloze" : ""}${studyReviewTypography ? " is-study-review" : ""}${studyReviewTypography && correctionMode ? " is-study-correction" : ""}`}>{table ? <TableGrid doc={table} renderCell={(cell) => <>{renderedParts.filter((_,index) => parts[index].cellId === cell.id)}</>}/> : renderedParts}</div>;
 }
 
 export function shouldFocusConnectionContinue(checked: boolean, desktop: boolean) {
@@ -6714,6 +6756,8 @@ export default function StudyApp() {
   const [resumeSessionMode, setResumeSessionMode] = useState<StudySessionMode | null>(null);
   const [startOrderOpen, setStartOrderOpen] = useState(false);
   const [rangeContentType, setRangeContentType] = useState<LearningContentType>("all");
+  const [rangeSubject, setRangeSubject] = useState("all");
+  const [todayReviewTurn, setTodayReviewTurn] = useState(0);
   const [rangeSelectedCardIds, setRangeSelectedCardIds] = useState<number[]>([]);
   const [answerVisible, setAnswerVisible] = useState(false);
   const [studyReviewCard, setStudyReviewCard] = useState<StudyCard | null>(null);
@@ -6804,7 +6848,8 @@ export default function StudyApp() {
   const stageCard = cards.find(card => card.id === studySequenceIds.find(id => !studiedCardIds.includes(id)));
   const activeLearningStage = stageCard ? studyStagePlan[stageCard.id] ?? learningStage(stageCard) : "keyword";
   const mode: StudyMode = activeLearningStage === "full" ? "write" : "reveal";
-  const studySessionMode: StudySessionMode = selectedSessionMode;
+  const todayReview = studyRound === "today-review";
+  const studySessionMode: StudySessionMode = todayReview ? "real" : selectedSessionMode;
   const sessionRootRef = useMobileStudyViewport((mainTab === "study" && studyStarted && !studyFinished) || (mainTab === "quiz" && quizItems.length > 0 && !quizFinished));
 
   useEffect(() => {
@@ -7097,6 +7142,11 @@ export default function StudyApp() {
     [activeStudySet, cards, subject, learningSets]
   );
   const sections = useMemo(() => [...new Set(scopedCards.map((card) => card.section))].sort(), [scopedCards]);
+  const todayReviewCardIds = useMemo(() => {
+    if (subject !== INCORRECT_VIEW || dailyStats?.date !== koreanStudyDay().date) return [];
+    const pending = new Set(dailyStats.reviewCardIds ?? []);
+    return cards.filter(card => !card.archivedAt && pending.has(card.id)).map(card => card.id);
+  }, [cards, dailyStats, subject]);
 
   const filtered = useMemo(() => {
     const matches = scopedCards.filter((card) =>
@@ -7318,13 +7368,17 @@ export default function StudyApp() {
     ? studyStats.connectionPerformance[String(current.id)]
     : undefined;
   const currentStudyConnectionReverse = hasLowConnectivity(currentStudyConnectionPerformance);
-  const rangeCards = useMemo(
-    () => learningCardsForContentType(filtered, rangeContentType),
-    [filtered, rangeContentType]
-  );
+  const rangeSubjectCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    filtered.forEach(card => counts.set(card.subject, (counts.get(card.subject) ?? 0) + 1));
+    return counts;
+  }, [filtered]);
+  const rangeSubjectCards = useMemo(() => subject === INCORRECT_VIEW && rangeSubject !== "all"
+    ? filtered.filter(card => card.subject === rangeSubject) : filtered, [filtered, rangeSubject, subject]);
+  const rangeCards = useMemo(() => learningCardsForContentType(rangeSubjectCards, rangeContentType), [rangeSubjectCards, rangeContentType]);
   const rangeContentTypeCounts = useMemo(() => new Map(
-    LEARNING_CONTENT_TYPE_OPTIONS.map(({ value }) => [value, learningCardsForContentType(filtered, value).length])
-  ), [filtered]);
+    LEARNING_CONTENT_TYPE_OPTIONS.map(({ value }) => [value, learningCardsForContentType(rangeSubjectCards, value).length])
+  ), [rangeSubjectCards]);
   const rangeSelectedCardIdSet = useMemo(() => new Set(rangeSelectedCardIds), [rangeSelectedCardIds]);
   const selectedRangeCount = rangeSelectedCardIds.length;
   const allVisibleRangeCardsSelected = rangeCards.length > 0 && rangeCards.every((card) => rangeSelectedCardIdSet.has(card.id));
@@ -7432,20 +7486,21 @@ export default function StudyApp() {
     beginStudy(startCardId, savedSequence, savedStudySessionMode(savedMode) ?? studySessionMode);
   }
 
-  function beginStudy(startCardId: number, savedSequence: number[] | undefined, selectedMode: StudySessionMode) {
-    if (!filtered.length) return;
-    const nextSequence = remainingStudySequence(filtered.map((card) => card.id), startCardId, savedSequence);
+  function beginStudy(startCardId: number, savedSequence: number[] | undefined, selectedMode: StudySessionMode, todayIds?: number[]) {
+    const nextSequence = remainingStudySequence(todayIds ?? filtered.map((card) => card.id), startCardId, savedSequence);
     if (!nextSequence.length) return;
-    applyStudySessionMode(selectedMode);
+    if (!todayIds) applyStudySessionMode(selectedMode);
     studyPausedRef.current = false;
     setStudyPaused(false);
-    setStudyStagePlan(Object.fromEntries(cards.filter(card => nextSequence.includes(card.id)).map(card => [card.id, learningStage(card)])));
+    setStudyStagePlan(Object.fromEntries(cards.filter(card => nextSequence.includes(card.id)).map(card => [card.id,
+      todayIds && !clozeParts(card).some(part => part.type === "blank") ? "full" : learningStage(card)])));
     setStudySequenceIds(nextSequence);
     announcedLearningSetRef.current = null;
     studyKeywordAttemptRecordedRef.current = false;
     setStudiedCardIds([]);
     setStudyFinished(false);
-    setStudyRound("main");
+    setStudyRound(todayIds ? "today-review" : "main");
+    setTodayReviewTurn(0);
     setSessionIncorrectCardIds([]);
     setStudyKeywordRetryAnswers({});
     setStartingMistakeReview(false);
@@ -7471,11 +7526,17 @@ export default function StudyApp() {
     setStartOrderOpen(false);
     studyRunAttemptsRef.current = [];
     studyQuestionDurationMsRef.current.clear();
-    rememberStudyPosition(nextSequence[0] ?? null, nextSequence, selectedMode);
+    if (!todayIds) rememberStudyPosition(nextSequence[0] ?? null, nextSequence, selectedMode);
+  }
+
+  function startTodayReview() {
+    if (!todayReviewCardIds.length || (studyStarted && !studyFinished)) return;
+    beginStudy(todayReviewCardIds[0], todayReviewCardIds, "real", todayReviewCardIds);
   }
 
   function openStartOrderChooser() {
     setRangeContentType("all");
+    setRangeSubject("all");
     setRangeSelectedCardIds([]);
     setStartOrderOpen(true);
   }
@@ -8589,7 +8650,7 @@ export default function StudyApp() {
     if (studyPausedRef.current) return;
     if (!current || resolvedStudyCardIdRef.current === current.id) return;
     if (studyKeywordMode && (!answerVisible || !studyCorrectionsComplete)) return;
-    if (!skipConnection && studyKeywordMode && studySessionMode === "real" && result === "correct" && reason === "manual" && currentStudyQuestionKeywords.length > 0) {
+    if (!todayReview && !skipConnection && studyKeywordMode && studySessionMode === "real" && result === "correct" && reason === "manual" && currentStudyQuestionKeywords.length > 0) {
       setStudyConnectionActive(true);
       setStudyConnectionAnswers([]);
       setStudyConnectionChecked(false);
@@ -8609,7 +8670,7 @@ export default function StudyApp() {
     const outcome = studyAttemptOutcome(studySessionMode, studyRound, result, usedHint);
     const learningKind: LearningKind = studySessionMode === "practice" ? "practice" : studyKeywordMode ? "keyword" : "full";
     const recordsCardResult = outcome.reviewResult !== null;
-    if (recordsCardResult && !queueReviewResult(current, mode, result, recordedAnswer, { learningKind, hintUsed: usedHint })) {
+    if (recordsCardResult && !queueReviewResult(current, mode, result, recordedAnswer, { learningKind, hintUsed: usedHint, queueAfterPending: todayReview })) {
       resolvedStudyCardIdRef.current = null;
       return;
     }
@@ -8633,9 +8694,14 @@ export default function StudyApp() {
         setStudyKeywordRetryAnswers((previous) => ({ ...previous, [current.id]: retryAnswers }));
       }
     }
-    const completedIds = new Set([...studiedCardIds, current.id]);
-    const finishedNow = studySequenceIds.every((cardId) => completedIds.has(cardId));
-    const nextCardId = studySequenceIds.find((cardId) => !completedIds.has(cardId)) ?? null;
+    const reviewStep = todayReview ? advanceTodayReview(studySequenceCards.map(card => card.id), studiedCardIds, current.id, result === "correct") : null;
+    const completedIds = new Set(reviewStep?.completed ?? [...studiedCardIds, current.id]);
+    const nextCardId = reviewStep ? reviewStep.nextCardId : studySequenceIds.find((cardId) => !completedIds.has(cardId)) ?? null;
+    const finishedNow = nextCardId === null;
+    if (reviewStep) {
+      setStudySequenceIds(reviewStep.sequence);
+      setTodayReviewTurn(turn => turn + 1);
+    }
     if (studySessionMode === "real" && studyRound === "main" && !studyTablePartial) {
       const durationMs = reason === "question-timeout"
         ? currentStudyTimeLimit * 1000
@@ -8668,8 +8734,8 @@ export default function StudyApp() {
     setStudiedCardIds([...completedIds]);
     if (finishedNow) {
       setStudyFinished(true);
-      rememberStudyPosition(null);
-    } else {
+      if (!todayReview) rememberStudyPosition(null);
+    } else if (!todayReview) {
       rememberStudyPosition(nextCardId);
     }
     setAnswerVisible(false);
@@ -8690,7 +8756,9 @@ export default function StudyApp() {
     resetStudyKeywordSupport();
     const timeoutLabel = `문제 풀이 ${currentStudyTimeLimit}초가`;
     const isRetryRound = studyRound === "mistake-review";
-    const message = studySessionMode === "real" && usedHint && outcome.retry && result === "correct"
+    const message = todayReview
+      ? finishedNow ? "오늘 복습을 모두 마쳤어요." : result === "correct" ? "맞았어요. 남은 카드로 갈게요." : "이 카드는 잠시 뒤 다시 나와요."
+      : studySessionMode === "real" && usedHint && outcome.retry && result === "correct"
       ? "정답 기록은 보류했어요. 힌트 없이 재도전에 성공하면 정답 1회로 기록해요."
       : reason !== "manual"
       ? isRetryRound
@@ -9082,7 +9150,7 @@ export default function StudyApp() {
     ? answerPaneFractions(mode === "reveal" ? current.answer : typedAnswer, current.answer, current.memo)
     : null;
   useEffect(() => {
-    if (!current) return;
+    if (!current || todayReview) return;
     if (subject === SELECTED_SETS_VIEW) {
       const set = learningSets.find((item) => item.cardIds.includes(current.id));
       if (set && announcedLearningSetRef.current !== set.id) {
@@ -9112,7 +9180,7 @@ export default function StudyApp() {
       });
       previousSectionPathRef.current = nextPath;
     }
-  }, [current, subject, learningSets]);
+  }, [current, subject, learningSets, todayReview]);
 
   useEffect(() => {
     if (!sectionAnnouncement) return;
@@ -9137,10 +9205,10 @@ export default function StudyApp() {
       if (active) setStudySecondsLeft(timeLimit);
     });
     return () => { active = false; };
-  }, [answered, current?.id, currentStudyTimeLimit, mode, studyRound, studySessionMode]);
+  }, [answered, current?.id, currentStudyTimeLimit, mode, studyRound, studySessionMode, todayReviewTurn]);
 
   useEffect(() => {
-    const timerPaused = !current || studyPaused || Boolean(pendingSessionExit) || studySessionMode !== "real" || studyConnectionActive || answered || Boolean(sectionAnnouncement) || dialogOpen || bulkOpen;
+    const timerPaused = todayReview || !current || studyPaused || Boolean(pendingSessionExit) || studySessionMode !== "real" || studyConnectionActive || answered || Boolean(sectionAnnouncement) || dialogOpen || bulkOpen;
     if (timerPaused) return;
 
     const cardId = current.id;
@@ -9167,7 +9235,7 @@ export default function StudyApp() {
         studyTimerDeadlineRef.current = null;
       }
     };
-  }, [answered, bulkOpen, current, currentStudyTimeLimit, mode, dialogOpen, sectionAnnouncement, studyConnectionActive, studySessionMode, studyPaused, studyKeywordMode, pendingSessionExit]);
+  }, [answered, bulkOpen, current, currentStudyTimeLimit, mode, dialogOpen, sectionAnnouncement, studyConnectionActive, studySessionMode, studyPaused, studyKeywordMode, pendingSessionExit, todayReview]);
 
   useEffect(() => {
     if (currentQuizCardId === null || quizFinished || quizChecked) return;
@@ -9693,7 +9761,7 @@ export default function StudyApp() {
                 </div>
               </section>
 
-              {filtered.length > 0 && !studyStarted ? (
+              {(filtered.length > 0 || subject === INCORRECT_VIEW) && !studyStarted ? (
                 <section className="study-start">
                   <div className="study-start-card">
                     <span className="study-start-icon"><BookOpen /></span>
@@ -9702,21 +9770,23 @@ export default function StudyApp() {
                       <h1>어디서 시작할까요?</h1>
                       <p>{filtered.length}장의 카드가 준비됐어요. 단계별 학습은 키워드 3회 → 전체 쓰기 2회 순서로 진행해요.</p>
                     </div>
-                    <div className="study-start-buttons">
+                    <div className={`study-start-buttons${subject === INCORRECT_VIEW ? " has-today-review" : ""}`}>
+                      {subject === INCORRECT_VIEW && <Button size="lg" variant="secondary" disabled={!todayReviewCardIds.length} onClick={startTodayReview}><RotateCcw /> 오늘 복습</Button>}
                       <Button size="lg" variant="outline" disabled={!resumeCardId} onClick={() => resumeCardId && startStudyAt(resumeCardId, resumeSequenceIds, resumeSessionMode)}><Clock3 /> 이어하기</Button>
-                      <Button size="lg" onClick={() => startStudyAt(filtered[0].id)}><RotateCcw /> 처음부터</Button>
+                      <Button size="lg" disabled={!filtered.length} onClick={() => filtered[0] && startStudyAt(filtered[0].id)}><RotateCcw /> 처음부터</Button>
                     </div>
-                    <Button size="lg" variant="secondary" className="start-order-button" onClick={openStartOrderChooser}><Rows3 /> 학습 범위 정하기 <ChevronRight /></Button>
+                    {subject === INCORRECT_VIEW && <small>{todayReviewCardIds.length ? `오늘 틀리고 아직 맞히지 못한 카드 ${todayReviewCardIds.length}장` : dailyStats ? "오늘 다시 풀 오답이 없어요." : "오늘의 풀이 기록을 확인하고 있어요."}</small>}
+                    <Button size="lg" variant="secondary" className="start-order-button" disabled={!filtered.length} onClick={openStartOrderChooser}><Rows3 /> 학습 범위 정하기 <ChevronRight /></Button>
                     {!resumeCardId && <small>아직 이어갈 학습 위치가 없어요.</small>}
                   </div>
                 </section>
               ) : studyFinished ? (
                 <section className="study-complete">
                   <div className="study-complete-icon"><Check /></div>
-                  <span className="eyebrow">{studyRound === "mistake-review" ? "RETRY COMPLETE" : "STUDY COMPLETE"}</span>
-                  <h1>{studyRound === "mistake-review" ? "재도전을 마쳤어요" : "학습을 모두 마쳤어요"}</h1>
+                  <span className="eyebrow">{todayReview ? "TODAY'S REVIEW" : studyRound === "mistake-review" ? "RETRY COMPLETE" : "STUDY COMPLETE"}</span>
+                  <h1>{todayReview ? "오늘 복습을 마쳤어요" : studyRound === "mistake-review" ? "재도전을 마쳤어요" : "학습을 모두 마쳤어요"}</h1>
                   <p>
-                    {studyRound === "mistake-review"
+                    {todayReview ? `오늘 복습 대상 ${studySequenceCards.length}장을 모두 맞혔어요.` : studyRound === "mistake-review"
                       ? `재도전 대상 ${studySequenceCards.length}장의 카드를 다시 풀었어요.`
                       : `이번 학습에서 ${studySequenceCards.length}장의 카드를 한 번씩 복습했어요.`}
                   </p>
@@ -9728,7 +9798,8 @@ export default function StudyApp() {
                     )}
                     <div className="study-complete-secondary-actions">
                       <Button size="lg" variant="outline" onClick={() => { resetStudy(); setSubject(""); }}><ArrowLeft /> 홈으로 나가기</Button>
-                      <Button size="lg" variant={studyRound === "main" && sessionIncorrectCardIds.length > 0 ? "outline" : "default"} onClick={() => filtered[0] && startStudyAt(filtered[0].id)}><RotateCcw /> 전체 다시 학습</Button>
+                      {todayReview ? <Button size="lg" onClick={resetStudy}>오답 카드로 돌아가기 <ChevronRight /></Button>
+                        : <Button size="lg" variant={studyRound === "main" && sessionIncorrectCardIds.length > 0 ? "outline" : "default"} onClick={() => filtered[0] && startStudyAt(filtered[0].id)}><RotateCcw /> 전체 다시 학습</Button>}
                     </div>
                   </div>
                 </section>
@@ -9736,12 +9807,12 @@ export default function StudyApp() {
                 <section className="study-area">
                   <div className="study-progress-row">
                     <Button variant="ghost" className="mobile-session-back" aria-label="학습 나가기" onPointerDown={event => event.preventDefault()} onClick={leaveStudySelection}><ArrowLeft /><span>{activeStudySet?.name ?? (subject === IMPORTANT_VIEW ? "중요 카드" : subject === INCORRECT_VIEW ? "오답 카드" : subject === ARCHIVED_VIEW ? "보관함" : subject)}</span></Button>
-                    <div className="session-progress-summary"><span>{studiedCardIds.length + 1}/{studySequenceCards.length}</span><span className="learning-stage-label">{learningStageLabel(current)}</span></div>
+                    <div className="session-progress-summary"><span>{todayReview ? `${studiedCardIds.length}/${studySequenceCards.length}장 정답` : `${studiedCardIds.length + 1}/${studySequenceCards.length}`}</span><span className="learning-stage-label">{todayReview ? "오늘 복습" : learningStageLabel(current)}</span></div>
                     <Progress value={progress} />
                     <div className="study-progress-meta">
                       <span>{studyConnectionActive ? "질문 연결" : importanceLabel[normalizeImportance(current.importance)]}</span>
                       {!answered && !studyConnectionActive && studyKeywordMode && studyHintAllowed(studySessionMode, studyRound) && <Button type="button" variant="outline" className="mobile-session-hint" disabled={studyPaused || currentStudyEvaluations.every(item => item.matched)} onMouseDown={event => event.preventDefault()} onClick={() => revealStudyHint()}><Lightbulb /> 힌트</Button>}
-                      {studySessionMode === "real" && <StudyClockControl seconds={studySecondsLeft} phase={studyConnectionActive ? "연결" : answered ? "정답" : "문제"}
+                      {studySessionMode === "real" && !todayReview && <StudyClockControl seconds={studySecondsLeft} phase={studyConnectionActive ? "연결" : answered ? "정답" : "문제"}
                         paused={studyPaused} untimed={studyConnectionActive || answered} blocked={dialogOpen || bulkOpen || Boolean(sectionAnnouncement)} onPause={pauseStudy} onResume={resumeStudy} />}
                     </div>
                   </div>
@@ -9804,7 +9875,7 @@ export default function StudyApp() {
                             <>
                               <div className={`study-keyword-attempt${answered ? answerDensityClass(current.answer) : ""}`}>
                                 {answered && studyCorrectionKeywords.length > 0 ? <QuizCloze
-                                  key={`study:${current.id}:${studyRound}`}
+                                  key={`study:${current.id}:${studyRound}:${todayReviewTurn}`}
                                   card={current}
                                   tableTabOrder={tableTabOrder}
                                   partsOverride={studyCorrectionParts}
@@ -9814,6 +9885,7 @@ export default function StudyApp() {
                                   autoFocusFirst={!sectionAnnouncement && !dialogOpen && !bulkOpen}
                                   inputLabel="오답 수정"
                                   correctionMode
+                                  studyReview
                                   matchFeedback
                                   onChange={(index, value) => {
                                     if (studyPausedRef.current) return;
@@ -9825,12 +9897,13 @@ export default function StudyApp() {
                                   }}
                                   onSubmit={() => undefined}
                                 /> : <QuizCloze
-                                  key={`study:${current.id}:${studyRound}`}
+                                  key={`study:${current.id}:${studyRound}:${todayReviewTurn}`}
                                   card={current}
                                   tableTabOrder={tableTabOrder}
                                   partsOverride={currentStudyParts}
                                   answers={studyKeywordAnswers}
                                   checked={answered}
+                                  studyReview
                                   autoFocusFirst={!sectionAnnouncement && !dialogOpen && !bulkOpen}
                                   hints={studyHints}
                                   guidedPractice={studySessionMode === "practice"}
@@ -9874,7 +9947,7 @@ export default function StudyApp() {
                               {!answered && <small className="desktop-shortcut-help">Enter로 확인 · Shift+Enter로 줄바꿈</small>}
                             </span>
                             <div className="typed-input-wrap">
-                              {currentStudyTable ? <FullTableWriting key={current.id} card={current} values={fullTableAnswers} onChange={(values, answer) => { if (studyPausedRef.current) return; setFullTableAnswers(values); setTypedAnswer(answer); }} disabled={answered || studyPaused} autoFocus={studyAnswerAutoFocus} tableTabOrder={tableTabOrder} /> : <Textarea
+                              {currentStudyTable ? <FullTableWriting key={`${current.id}:${todayReviewTurn}`} card={current} values={fullTableAnswers} onChange={(values, answer) => { if (studyPausedRef.current) return; setFullTableAnswers(values); setTypedAnswer(answer); }} disabled={answered || studyPaused} autoFocus={studyAnswerAutoFocus} tableTabOrder={tableTabOrder} /> : <Textarea
                                 ref={typedAnswerRef}
                                 value={typedAnswer}
                                 onChange={(e) => { if (!studyPausedRef.current) setTypedAnswer(e.target.value); }}
@@ -10505,6 +10578,7 @@ export default function StudyApp() {
             <AlertDialogDescription>
               {pendingSessionExit?.kind === "quiz"
                 ? "이미 채점한 퀴즈 결과는 저장돼요. 아직 채점하지 않은 답과 남은 재도전은 종료돼요."
+                : todayReview ? "확정한 풀이 결과는 저장돼요. 오늘 복습을 다시 열면 아직 못 맞힌 카드부터 풀 수 있어요."
                 : "다음 문제로 넘기며 확정한 카드 결과는 저장돼요. 현재 카드의 입력과 미확정 결과는 사라지고, 이어하기는 이 카드부터 시작해요."}
               {" "}이미 기록된 키워드 채점과 힌트 사용 이력은 유지돼요.
             </AlertDialogDescription>
@@ -10522,6 +10596,13 @@ export default function StudyApp() {
               <DialogTitle>학습 범위 정하기</DialogTitle>
               <DialogDescription>원하는 섹션이나 카드를 눌러 학습 범위에 추가하세요. 다시 누르면 제외돼요.</DialogDescription>
             </DialogHeader>
+            {subject === INCORRECT_VIEW && <label className="start-order-subject-filter">
+              <span id="start-order-subject-title">과목</span>
+              <select aria-labelledby="start-order-subject-title" value={rangeSubject} onChange={event => setRangeSubject(event.target.value)}>
+                <option value="all">전체 과목 ({filtered.length}장)</option>
+                {[...rangeSubjectCounts].map(([name, count]) => <option key={name} value={name}>{name} ({count}장)</option>)}
+              </select>
+            </label>}
             <section className="start-order-type-filter" aria-labelledby="start-order-type-title">
               <span id="start-order-type-title">분류</span>
               <RadioGroup
@@ -10567,10 +10648,11 @@ export default function StudyApp() {
                     const isSelected = rangeSelectedCardIdSet.has(card.id);
                     return (
                       <Fragment key={`start-${card.id}`}>
-                        {path !== previousPath && (
+                        {(path !== previousPath || (subject === INCORRECT_VIEW && card.subject !== previousCard?.subject)) && (
                           <TableRow className="start-order-section-row">
                             <TableCell colSpan={2}>
                               <nav className="start-order-section-path" aria-label="학습 범위 섹션">
+                                {subject === INCORRECT_VIEW && <strong className="start-order-subject-name">{card.subject}</strong>}
                                 {pathParts.map((part, partIndex) => {
                                   const sectionCardIds = learningCardIdsForSection(rangeCards, card.id, part.level);
                                   const sectionSelected = sectionCardIds.length > 0 && sectionCardIds.every((id) => rangeSelectedCardIdSet.has(id));

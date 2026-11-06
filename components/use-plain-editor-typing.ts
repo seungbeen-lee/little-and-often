@@ -217,8 +217,9 @@ export function usePlainEditorTyping(ref: RefObject<HTMLDivElement | null>, enab
     };
     const resetManual = () => { if (!preservingTyping.has(editor)) clearManualEditorBold(editor); };
     const listLineBreak = () => {
-      // Explicit cursor toggles survive list breaks. Inherited/block formatting
-      // ends here; run only after the list edit has collapsed the caret.
+      // Explicit cursor toggles survive breaks. Inherited/block formatting
+      // ends after the break has placed the caret on the new line, including
+      // a break in the middle of a bold run where beforeinput cannot unbold it.
       if (applyManualBold(editor)) return;
       plainAfterEdit.add(editor);
       applyPlainAfterEdit(editor);
@@ -230,6 +231,9 @@ export function usePlainEditorTyping(ref: RefObject<HTMLDivElement | null>, enab
         || ((event.metaKey || event.ctrlKey) && (event.code === "KeyA" || event.key.toLowerCase() === "a"))) resetPlain();
     };
     const input = (event: Event) => {
+      const native = event as InputEvent;
+      if (["insertParagraph", "insertLineBreak"].includes(native.inputType)
+        && document.activeElement === editor && !composing && !native.isComposing && !isEditorComposing(editor)) listLineBreak();
       // A selected-text command starts inherited formatting again. Cursor-only
       // toggles suppress this style event and set manualBold explicitly above.
       if (["formatBold", "formatRemove", "historyUndo", "historyRedo"].includes((event as InputEvent).inputType)) resetManual();

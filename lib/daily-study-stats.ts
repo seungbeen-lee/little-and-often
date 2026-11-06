@@ -10,6 +10,7 @@ export type DailySubjectStats = {
 export type DailyStudyStats = Omit<DailySubjectStats, "subject" | "learnedCardIds"> & {
   date: string;
   subjects: DailySubjectStats[];
+  reviewCardIds?: number[];
 };
 
 export type DailySubjectStatsRow = Omit<DailySubjectStats, "accuracy" | "learnedCardIds"> & {

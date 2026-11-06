@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb, getRawDb } from "../../../db";
 import { dailyStudyStats, koreanStudyDay, type DailySubjectStatsRow } from "../../../lib/daily-study-stats";
-import { DAILY_STUDY_QUERY } from "../../../lib/daily-study-query";
+import { DAILY_REVIEW_QUERY, DAILY_STUDY_QUERY } from "../../../lib/daily-study-query";
 import { cards, connectionStats, keywordStats, studyRuns } from "../../../db/schema";
 import { toApiError } from "../../../lib/api-errors";
 import { getOwnerEmail, unauthorized } from "../../../lib/auth";
@@ -171,9 +171,13 @@ export async function GET(request: Request) {
     if (new URL(request.url).searchParams.get("daily") === "1") {
       const now = new Date();
       const day = koreanStudyDay(now);
-      const rows = await getRawDb().prepare(DAILY_STUDY_QUERY)
-        .bind(ownerEmail, day.start, day.end).all<DailySubjectStatsRow>();
-      return Response.json({ daily: dailyStudyStats(rows.results ?? [], now) }, { headers: { "Cache-Control": "no-store" } });
+      const db = getRawDb();
+      const [rows, review] = await Promise.all([
+        db.prepare(DAILY_STUDY_QUERY).bind(ownerEmail, day.start, day.end).all<DailySubjectStatsRow>(),
+        db.prepare(DAILY_REVIEW_QUERY).bind(ownerEmail, day.start, day.end).all<{ cardId: number }>(),
+      ]);
+      const daily = { ...dailyStudyStats(rows.results ?? [], now), reviewCardIds: (review.results ?? []).map(({ cardId }: { cardId: number }) => cardId) };
+      return Response.json({ daily }, { headers: { "Cache-Control": "no-store" } });
     }
     return Response.json({ stats: await getStats(ownerEmail) });
   } catch (error) {

@@ -104,6 +104,7 @@ function editList(editor: HTMLElement, key: string, shift = false) {
   const anchor = pointOffset(editor, selection.anchorNode, selection.anchorOffset), focus = pointOffset(editor, selection.focusNode, selection.focusOffset);
   const plan = planEditorListKey(editorText(editor).text, anchor, focus, key, shift);
   if (!plan) return false;
+  const insertsMarker = plan.edits.some(edit => edit.text.includes("•"));
   // One logical input/history entry, including a multi-line indent operation.
   const suppress = (event: Event) => event.stopImmediatePropagation();
   editor.addEventListener("input", suppress, true);
@@ -112,6 +113,10 @@ function editList(editor: HTMLElement, key: string, shift = false) {
       const { points } = editorText(editor), range = document.createRange();
       range.setStart(...points[edit.start]); range.setEnd(...points[edit.end]);
       selection.removeAllRanges(); selection.addRange(range);
+      // A new list marker is inserted before the post-break typing reset.
+      // Insert it without inherited bold; the reset below restores an explicit
+      // cursor toggle for the item text without making the bullet itself bold.
+      if (edit.text.includes("•") && document.queryCommandState("bold")) document.execCommand("bold");
       document.execCommand("insertText", false, edit.text);
     }
     // Removing the last empty bullet can leave a zero-height DIV. Give that
@@ -122,7 +127,7 @@ function editList(editor: HTMLElement, key: string, shift = false) {
     selection.setBaseAndExtent(...points[Math.min(plan.anchor, points.length - 1)], ...points[Math.min(plan.focus, points.length - 1)]);
   } finally { editor.removeEventListener("input", suppress, true); }
   if (plan.edits.length) {
-    if (key === "Enter" && shift) editor.dispatchEvent(new Event(editorListLineBreakEvent));
+    if (insertsMarker || (key === "Enter" && shift)) editor.dispatchEvent(new Event(editorListLineBreakEvent));
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
   }
   return true;

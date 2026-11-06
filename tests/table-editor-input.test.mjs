@@ -8,7 +8,7 @@ import { createServer } from "vite";
 // This exercises React's actual event handlers and live contenteditable nodes.
 // jsdom supplies DOM/event semantics, not Safari's native IME or visual layout.
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/", pretendToBeVisual: true });
-for (const name of ["window", "document", "navigator", "Node", "NodeFilter", "Element", "HTMLElement", "HTMLInputElement", "HTMLTextAreaElement", "Text", "DocumentFragment", "Event", "InputEvent", "CompositionEvent", "KeyboardEvent", "FocusEvent", "CustomEvent", "MutationObserver", "Range"]) {
+for (const name of ["window", "document", "navigator", "Node", "NodeFilter", "Element", "HTMLElement", "HTMLInputElement", "HTMLTextAreaElement", "HTMLFormElement", "HTMLSelectElement", "Text", "DocumentFragment", "Event", "InputEvent", "CompositionEvent", "KeyboardEvent", "FocusEvent", "CustomEvent", "MutationObserver", "Range"]) {
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: dom.window[name] });
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,6 +68,7 @@ const { createRoot } = await import("react-dom/client");
 const rootPath = fileURLToPath(new URL("..", import.meta.url));
 const vite = await createServer({ appType: "custom", configFile: false, root: rootPath, resolve: { alias: { "@": rootPath } }, server: { middlewareMode: true, hmr: false, ws: false } });
 const { CellEditor, TableRegistration } = await vite.ssrLoadModule("/components/table-card.tsx");
+const { FormattedTextEditor, BulkCreateDialog } = await vite.ssrLoadModule("/app/study-app.tsx");
 const { createTable, editCell, plainCell, encodeTable } = await vite.ssrLoadModule("/lib/table-card.ts");
 let mountedRoot;
 afterEach(() => {
@@ -119,6 +120,129 @@ function mount(format = "") {
 
 function click(element, detail = 1) {
   act(() => element.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, detail })));
+}
+
+test("Enter in a new section adds one card immediately beneath it and focuses classification", async () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const previousScroll = dom.window.HTMLElement.prototype.scrollTo;
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  mountedRoot = createRoot(host);
+  try {
+    await act(async () => mountedRoot.render(React.createElement(BulkCreateDialog, {
+      open: true, onOpenChange() {}, initialSubject: "과학", initialSet: null, initialSelectedCardId: null,
+      startInSetMode: false, subjects: ["과학"], cards: [], onSaved() {}, onCardArchived() {}, onSetSaved() {}, onView() {},
+    })));
+    const sectionButton = [...document.querySelectorAll('.bulk-insert-button-group button')].find(button => button.textContent.trim() === "섹션");
+    assert.ok(sectionButton); click(sectionButton);
+    const section = document.querySelector('[data-bulk-divider]');
+    assert.ok(section);
+    const cardCount = () => document.querySelectorAll('[data-bulk-question]').length;
+    const before = cardCount();
+    key(section, "Enter", { isComposing: true });
+    key(section, "Enter", { keyCode: 229 });
+    key(section, "Enter", { repeat: true });
+    assert.equal(cardCount(), before, "composition confirmation and held keys must not create cards");
+    const enter = key(section, "Enter");
+    assert.equal(enter.defaultPrevented, true);
+    assert.equal(cardCount(), before + 1);
+    const rows = [...document.querySelectorAll('.bulk-table [data-bulk-empty-delete-row]')];
+    const sectionIndex = rows.indexOf(section.closest('[data-bulk-empty-delete-row]'));
+    const added = rows[sectionIndex + 1];
+    assert.ok(added.querySelector('[data-bulk-question]'), "the inserted row belongs directly below the section");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
+    assert.equal(document.activeElement.dataset.bulkFocusKind, "content-type");
+    assert.equal(document.activeElement.dataset.bulkRowId, added.dataset.bulkEmptyDeleteRow);
+  } finally {
+    act(() => mountedRoot.unmount()); mountedRoot = null;
+    dom.window.HTMLElement.prototype.scrollTo = previousScroll;
+    window.localStorage.clear();
+  }
+});
+
+for (const manual of [false, true]) {
+  test(`new bullet insertion uses plain typing before restoring explicit bold: manual=${manual}`, () => {
+    const host = document.createElement("div"); document.body.append(host);
+    mountedRoot = createRoot(host);
+    act(() => mountedRoot.render(React.createElement(FormattedTextEditor, {
+      text: "• 청각적으로 듣기", format: "• 청각적으로 듣기", label: "목록 답", placeholder: "", answer: true, showTableButton: false, onChange() {},
+    })));
+    const editor = host.querySelector('[contenteditable="true"]');
+    act(() => editor.focus());
+    const originalQuery = document.queryCommandState, originalExec = document.execCommand;
+    let typingBold = false;
+    const inserted = [];
+    document.queryCommandState = command => command === "bold" ? typingBold : false;
+    document.execCommand = (command, ui, value) => {
+      if (command === "bold") {
+        typingBold = !typingBold;
+        if (window.getSelection().isCollapsed) return true;
+      }
+      if (command === "insertText") inserted.push({ text: value, bold: typingBold });
+      return originalExec(command, ui, value);
+    };
+    try {
+      const text = editor.firstChild;
+      if (manual) caret(text);
+      else window.getSelection().setBaseAndExtent(text, text.length - 2, text, text.length);
+      key(editor, "b", { code: "KeyB", metaKey: true });
+      caret(editor, editor.childNodes.length);
+      key(editor, "Enter", { shiftKey: true });
+      assert.deepEqual(inserted, [{ text: "\n• ", bold: false }]);
+      assert.equal(typingBold, manual, "manual bold applies to the item text, never to the marker");
+      assert.equal(editor.textContent, "• 청각적으로 듣기\n• ");
+      if (!manual) assert.equal(editor.querySelector("strong").textContent, "듣기");
+    } finally { document.queryCommandState = originalQuery; document.execCommand = originalExec; }
+  });
+}
+
+for (const inputType of ["insertLineBreak", "insertParagraph"]) {
+  for (const manual of [false, true]) {
+    test(`card ${inputType} resets selected bold but preserves cursor toggles: manual=${manual}`, () => {
+      const host = document.createElement("div"); document.body.append(host);
+      const changes = [];
+      mountedRoot = createRoot(host);
+      act(() => mountedRoot.render(React.createElement(FormattedTextEditor, {
+        text: "첫문구", format: "첫문구", label: "답", placeholder: "", answer: true, showTableButton: false,
+        onChange: (text, format) => changes.push({ text, format }),
+      })));
+      const editor = host.querySelector('[contenteditable="true"]');
+      act(() => editor.focus());
+      const originalQuery = document.queryCommandState, originalExec = document.execCommand;
+      let typingBold = false;
+      document.queryCommandState = command => command === "bold" ? typingBold : false;
+      document.execCommand = (command, ui, value) => {
+        if (command === "bold") {
+          typingBold = !typingBold;
+          if (window.getSelection().isCollapsed) return true;
+        }
+        return originalExec(command, ui, value);
+      };
+      try {
+        const text = editor.firstChild;
+        if (manual) caret(text);
+        else window.getSelection().setBaseAndExtent(text, 0, text, text.length);
+        key(editor, "b", { code: "KeyB", metaKey: true });
+        assert.equal(typingBold, true);
+        // Model the native break splitting an existing bold run. jsdom cannot
+        // perform native typing-style edits; the production input listener must
+        // fix the new caret's typing style without unbolding either existing run.
+        editor.innerHTML = "<strong>첫</strong><div><strong>문구</strong></div>";
+        caret(editor.lastChild.firstChild.firstChild, 0);
+        input(editor, { inputType, isComposing: false });
+        assert.equal(typingBold, manual);
+        assert.equal(editor.querySelectorAll("strong").length, 2);
+        assert.equal(editor.textContent, "첫문구");
+        assert.ok(changes.at(-1).format.includes("[b]첫[/b]"));
+        if (!manual) {
+          // A native deletion can inherit bold again; subsequent plain typing
+          // must restore the new-line default rather than resurrect bold.
+          typingBold = true;
+          act(() => editor.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "새" })));
+          assert.equal(typingBold, false);
+        }
+      } finally { document.queryCommandState = originalQuery; document.execCommand = originalExec; }
+    });
+  }
 }
 
 async function mountRegistration() {
