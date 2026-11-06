@@ -159,6 +159,7 @@ type QuizReason = "recommended" | "archive-review" | "keyword-review";
 type QuizItem = { cardId: number; reason: QuizReason; keyword?: string; keywordKey?: string };
 type QuizRound = "main" | "retry";
 type QuizAnswerOrder = boolean | readonly number[];
+type TodayReviewRetry = { source: string; parts: ClozePart[]; order: QuizAnswerOrder };
 type QuizHintStage = 1 | 2;
 type QuizBlankHint = { stage: QuizHintStage; keyword: string; text: string; keywordKey?: string; revision?: number };
 type QuizCardHints = Partial<Record<number, QuizBlankHint>>;
@@ -2001,10 +2002,12 @@ export function areQuizCorrectionsComplete(keywords: string[], answers: string[]
 export function quizInlineCorrections(
   parts: ClozePart[],
   evaluations: Array<{ matched: boolean; expectedKeyword: string }>,
-  originalAnswers: string[]
+  originalAnswers: string[],
+  order = quizAnswerOrder(parts)
 ) {
   let answerIndex = 0;
   const answers: string[] = [];
+  const mappedResults = tableAttemptResults(parts, evaluations, order);
   const correctionParts: ClozePart[] = parts.map((part) => {
     if (part.type === "text") return part;
     const index = answerIndex++;
@@ -2014,7 +2017,7 @@ export function quizInlineCorrections(
       return { type: "text", value: originalAnswer.trim(), isCorrectAnswer: true, ...(part.cellId ? {cellId:part.cellId} : {}) };
     }
     answers.push("");
-    const mapped = tableAttemptResults(parts,evaluations)[index];
+    const mapped = mappedResults[index];
     return { ...part, type: "blank", keyword: evaluation?.expectedKeyword || part.keyword, ...(part.keywordId && mapped?.keywordKey ? {keywordId:mapped.keywordKey} : {}) };
   });
   return { parts: correctionParts, answers };
@@ -2864,9 +2867,8 @@ export function keywordReviewParts(card: StudyCard, keyword: string, keywordKey?
   });
 }
 
-export function tableAttemptResults(parts: ClozePart[], evaluations: Array<{matched:boolean;expectedKeyword:string}>) {
+export function tableAttemptResults(parts: ClozePart[], evaluations: Array<{matched:boolean;expectedKeyword:string}>, order = quizAnswerOrder(parts)) {
   const blanks = parts.flatMap((part) => part.type === "blank" ? [part] : []);
-  const order = quizAnswerOrder(parts);
   const available = blanks.map((part,index) => ({part,group:quizAnswerGroup(order,index)}));
   const targets = new Map<number, typeof blanks[number]>();
   for (const matched of [true,false]) evaluations.forEach((evaluation,index) => {
@@ -6758,6 +6760,7 @@ export default function StudyApp() {
   const [rangeContentType, setRangeContentType] = useState<LearningContentType>("all");
   const [rangeSubject, setRangeSubject] = useState("all");
   const [todayReviewTurn, setTodayReviewTurn] = useState(0);
+  const [todayReviewRetries, setTodayReviewRetries] = useState<Record<number, TodayReviewRetry>>({});
   const [rangeSelectedCardIds, setRangeSelectedCardIds] = useState<number[]>([]);
   const [answerVisible, setAnswerVisible] = useState(false);
   const [studyReviewCard, setStudyReviewCard] = useState<StudyCard | null>(null);
@@ -6847,7 +6850,6 @@ export default function StudyApp() {
   const [quizSelectionTime, setQuizSelectionTime] = useState(() => Date.now());
   const stageCard = cards.find(card => card.id === studySequenceIds.find(id => !studiedCardIds.includes(id)));
   const activeLearningStage = stageCard ? studyStagePlan[stageCard.id] ?? learningStage(stageCard) : "keyword";
-  const mode: StudyMode = activeLearningStage === "full" ? "write" : "reveal";
   const todayReview = studyRound === "today-review";
   const studySessionMode: StudySessionMode = todayReview ? "real" : selectedSessionMode;
   const sessionRootRef = useMobileStudyViewport((mainTab === "study" && studyStarted && !studyFinished) || (mainTab === "quiz" && quizItems.length > 0 && !quizFinished));
@@ -7333,7 +7335,12 @@ export default function StudyApp() {
     : null;
   const current = cardWithReviewContent(liveStudyCard, studyReviewCard);
   const currentStudyTable = readTable(current?.answerFormat);
-  const currentStudyParts: ClozePart[] = current ? clozeParts(current) : [];
+  const fullStudyParts = current ? clozeParts(current) : [];
+  const pendingTodayRetry = todayReview && current ? todayReviewRetries[current.id] : undefined;
+  const todayRetry = pendingTodayRetry?.source === JSON.stringify(fullStudyParts) ? pendingTodayRetry : undefined;
+  const mode: StudyMode = activeLearningStage === "full" && !todayRetry ? "write" : "reveal";
+  const currentStudyParts = todayRetry?.parts ?? fullStudyParts;
+  const currentStudyOrder = todayRetry?.order ?? quizAnswerOrder(currentStudyParts);
   // Keep the full-card record guard even without a separate row-range selector.
   const studyTablePartial = Boolean(currentStudyTable && currentStudyParts.filter((part) => part.type === "blank").length
     < tableParts(currentStudyTable).filter((part) => part.type === "blank").length);
@@ -7342,7 +7349,7 @@ export default function StudyApp() {
   const currentStudyEvaluations = evaluateQuizAnswers(
     currentStudyKeywords.map((part) => part.keyword),
     studyKeywordAnswers,
-    quizAnswerOrder(currentStudyParts)
+    currentStudyOrder
   );
   const studyKeywordsAllFilled = currentStudyKeywords.length > 0
     && currentStudyKeywords.every((_, answerIndex) => Boolean(studyKeywordAnswers[answerIndex]?.trim()));
@@ -7353,9 +7360,9 @@ export default function StudyApp() {
     studyKeywordMode && studyRound === "mistake-review" && current ? studyKeywordRetryAnswers[current.id] ?? [] : [],
     isMobileViewport
   );
-  const studyCorrectionParts = quizInlineCorrections(currentStudyParts, currentStudyEvaluations, studyKeywordAnswers).parts;
+  const studyCorrectionParts = quizInlineCorrections(currentStudyParts, currentStudyEvaluations, studyKeywordAnswers, currentStudyOrder).parts;
   const studyCorrectionKeywords = quizCorrectionKeywords(currentStudyEvaluations);
-  const studyCorrectionOrder = quizCorrectionOrder(quizAnswerOrder(currentStudyParts), currentStudyEvaluations);
+  const studyCorrectionOrder = quizCorrectionOrder(currentStudyOrder, currentStudyEvaluations);
   const studyCorrectionsComplete = areQuizCorrectionsComplete(studyCorrectionKeywords, studyCorrectionAnswers, studyCorrectionOrder);
   const studyQuestionRevealedKeywords = answerVisible && !studyKeywordMode
     ? currentStudyKeywords.map((part) => part.keyword)
@@ -7447,6 +7454,7 @@ export default function StudyApp() {
     setStudiedCardIds([]);
     setStudyFinished(false);
     setStudyRound("main");
+    setTodayReviewRetries({});
     setSessionIncorrectCardIds([]);
     setStudyKeywordRetryAnswers({});
     setStartingMistakeReview(false);
@@ -7501,6 +7509,7 @@ export default function StudyApp() {
     setStudyFinished(false);
     setStudyRound(todayIds ? "today-review" : "main");
     setTodayReviewTurn(0);
+    setTodayReviewRetries({});
     setSessionIncorrectCardIds([]);
     setStudyKeywordRetryAnswers({});
     setStartingMistakeReview(false);
@@ -8040,7 +8049,7 @@ export default function StudyApp() {
     };
   }, []);
 
-  function queueStatisticsOnlyReview(card: StudyCard, reviewMode: StudyMode, result: "correct" | "incorrect", answer: string, learning?: { learningKind: LearningKind; hintUsed?: boolean }) {
+  function queueStatisticsOnlyReview(card: StudyCard, reviewMode: StudyMode, result: "correct" | "incorrect", answer: string, learning?: { learningKind?: LearningKind; hintUsed?: boolean }) {
     queueReviewResult(card, reviewMode, result, answer, { ...learning, statisticsOnly: true, queueAfterPending: true, quietArchiveChange: true });
   }
 
@@ -8432,9 +8441,9 @@ export default function StudyApp() {
     const evaluations = evaluateQuizAnswers(
       currentStudyKeywords.map((part) => part.keyword),
       answersToGrade,
-      quizAnswerOrder(currentStudyParts)
+      currentStudyOrder
     );
-    if (studySessionMode === "real") recordStudyKeywordAttempt(current, tableAttemptResults(currentStudyParts, evaluations));
+    if (studySessionMode === "real") recordStudyKeywordAttempt(current, tableAttemptResults(currentStudyParts, evaluations, currentStudyOrder));
     setStudyInitialAttempt({
       cardId: current.id,
       typedAnswer: "",
@@ -8443,7 +8452,7 @@ export default function StudyApp() {
     });
     captureStudyQuestionDuration(current.id);
     setStudyKeywordAnswers(answersToGrade);
-    setStudyCorrectionAnswers(quizInlineCorrections(currentStudyParts, evaluations, answersToGrade).answers);
+    setStudyCorrectionAnswers(quizInlineCorrections(currentStudyParts, evaluations, answersToGrade, currentStudyOrder).answers);
     setStudyReviewCard(current);
     setAnswerVisible(true);
   }
@@ -8482,9 +8491,9 @@ export default function StudyApp() {
     reviewMode: StudyMode,
     result: "correct" | "incorrect",
     answer: string,
-    options?: { after?: Promise<boolean>; queueAfterPending?: boolean; quietArchiveChange?: boolean; learningKind?: LearningKind; hintUsed?: boolean; statisticsOnly?: boolean }
+    options?: { after?: Promise<boolean>; queueAfterPending?: boolean; quietArchiveChange?: boolean; learningKind?: LearningKind; hintUsed?: boolean; statisticsOnly?: boolean; tableKeywordIds?: string[] }
   ): QueuedReviewResult | null {
-    const tableKeywordIds = tableReviewKeywordIds(card);
+    const tableKeywordIds = options?.tableKeywordIds ?? tableReviewKeywordIds(card);
     const fullCoverage = !tableKeywordIds || (tableKeywordIds.length > 0 && tableKeywordIds.length === tableKeywords(card.answerFormat).length)
       || options?.learningKind === "full" || (options?.learningKind === "practice" && reviewMode === "write");
     const statisticsOnly = options?.statisticsOnly === true || !fullCoverage;
@@ -8668,13 +8677,37 @@ export default function StudyApp() {
     if (mode === "write" && !studyGuidedFull && reason === "manual") recordStudyKeywordAttempt(current, fullWriteKeywordMatches(current, recordedAnswer, fullTableAnswers));
     const usedHint = Object.keys(studyHintsRef.current).length > 0;
     const outcome = studyAttemptOutcome(studySessionMode, studyRound, result, usedHint);
-    const learningKind: LearningKind = studySessionMode === "practice" ? "practice" : studyKeywordMode ? "keyword" : "full";
+    // Completing the remaining blanks resolves the card across this session.
+    // It does not advance the independent full-recall learning streak.
+    const learningKind: LearningKind | undefined = todayRetry ? undefined : studySessionMode === "practice" ? "practice" : studyKeywordMode ? "keyword" : "full";
+    const completedTableKeywordIds = todayRetry && result === "correct" && currentStudyTable
+      ? tableKeywords(current.answerFormat).map(({ keywordKey }) => keywordKey)
+      : undefined;
     const recordsCardResult = outcome.reviewResult !== null;
-    if (recordsCardResult && !queueReviewResult(current, mode, result, recordedAnswer, { learningKind, hintUsed: usedHint, queueAfterPending: todayReview })) {
+    if (recordsCardResult && !queueReviewResult(current, mode, result, recordedAnswer, { learningKind, hintUsed: usedHint, queueAfterPending: todayReview, tableKeywordIds: completedTableKeywordIds })) {
       resolvedStudyCardIdRef.current = null;
       return;
     }
     if (!recordsCardResult) queueStatisticsOnlyReview(current, studyGuidedFull ? "write" : mode, result, recordedAnswer, { learningKind, hintUsed: usedHint });
+    if (todayReview && result === "incorrect" && currentStudyKeywords.length) {
+      const keywords = currentStudyKeywords.map(part => part.keyword);
+      const submitted = studyKeywordMode ? initialAttempt?.keywordAnswers ?? studyKeywordAnswers : keywords;
+      const writtenMatches = studyKeywordMode ? [] : currentStudyTable
+        ? fullWriteKeywordMatches(current, recordedAnswer, fullTableAnswers)
+        : keywordMatches(keywords, recordedAnswer);
+      const evaluations = studyKeywordMode ? evaluateQuizAnswers(keywords, submitted, currentStudyOrder)
+        : currentStudyKeywords.map(part => ({
+            expectedKeyword: part.keyword,
+            matched: writtenMatches.some(match => match.matched && (part.keywordId
+              ? "keywordKey" in match && match.keywordKey === part.keywordId
+              : normalizeForMatch(match.keyword) === normalizeForMatch(part.keyword))),
+          }));
+      if (evaluations.some(evaluation => !evaluation.matched)) {
+        const { parts } = quizInlineCorrections(currentStudyParts, evaluations, submitted, currentStudyOrder);
+        const retry = { source: JSON.stringify(fullStudyParts), parts, order: quizCorrectionOrder(currentStudyOrder, evaluations) };
+        setTodayReviewRetries(previous => ({ ...previous, [current.id]: retry }));
+      }
+    }
     if (outcome.retry) {
       setSessionIncorrectCardIds((previous) => previous.includes(current.id) ? previous : [...previous, current.id]);
       if (studyKeywordMode) {
@@ -9901,6 +9934,7 @@ export default function StudyApp() {
                                   card={current}
                                   tableTabOrder={tableTabOrder}
                                   partsOverride={currentStudyParts}
+                                  orderIndependentOverride={currentStudyOrder}
                                   answers={studyKeywordAnswers}
                                   checked={answered}
                                   studyReview

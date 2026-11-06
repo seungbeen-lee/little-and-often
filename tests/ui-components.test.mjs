@@ -1722,7 +1722,7 @@ test("guided practice records participation without changing card or keyword mas
   assert.equal(shouldRecordStudyCard("real", "mistake-review", "incorrect"), false);
   const source = await readFile(new URL("../app/study-app.tsx", import.meta.url), "utf8");
   assert.match(source, /const recorded = studyRecordedKeywords\(results, studySessionMode\);\s*if \(recorded.length\) queueKeywordAttempt\(card, recorded\)/);
-  assert.match(source, /if \(studySessionMode === "real"\) recordStudyKeywordAttempt\(current, tableAttemptResults\(currentStudyParts, evaluations\)\)/);
+  assert.match(source, /if \(studySessionMode === "real"\) recordStudyKeywordAttempt\(current, tableAttemptResults\(currentStudyParts, evaluations, currentStudyOrder\)\)/);
   assert.match(source, /const outcome = studyAttemptOutcome\(studySessionMode, studyRound, result, usedHint\)/);
 });
 
