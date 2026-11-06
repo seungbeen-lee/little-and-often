@@ -70,7 +70,9 @@ try {
     const blank = page.locator(".study-keyword-attempt [data-cloze-index]");
     const confirm = () => page.locator(".result-actions button").click();
     const showQuestion = question => page.locator(".study-card").getByText(question, { exact: true }).waitFor();
-    const fillBlank = (index, value) => page.locator(`.study-keyword-attempt [data-cloze-index="${index}"]`).fill(value);
+    const blankAt = index => page.locator(`.study-keyword-attempt [data-cloze-index="${index}"]`);
+    const fillBlank = (index, value) => blankAt(index).fill(value);
+    const activeBlank = () => page.evaluate(() => document.activeElement?.getAttribute("data-cloze-index"));
     const grade = () => page.getByRole("button", { name: "채점하기", exact: true }).click();
     const expectBlanks = async count => {
       assert.equal(await blank.count(), count);
@@ -79,10 +81,29 @@ try {
 
     await showQuestion("오늘 과학 문제");
     await expectBlanks(3);
+    await fillBlank(2, "오답");
+    await blankAt(0).click();
+    await page.keyboard.press("Shift+ArrowDown");
+    assert.equal(await activeBlank(), "0");
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await activeBlank(), "1");
+    await page.keyboard.press("ArrowUp");
+    assert.equal(await activeBlank(), "0");
+    await page.keyboard.press("ArrowUp");
+    assert.equal(await activeBlank(), "0");
     await fillBlank(0, "복숭아");
     await fillBlank(1, "오답");
-    await fillBlank(2, "오답");
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await activeBlank(), "2");
+    assert.equal(await blankAt(2).evaluate(input => input.selectionStart), "오답".length);
+    await page.keyboard.press("ArrowUp");
+    assert.equal(await activeBlank(), "1");
     await grade();
+    await blankAt(0).click();
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await activeBlank(), "1");
+    await page.keyboard.press("ArrowUp");
+    assert.equal(await activeBlank(), "0");
     await fillBlank(0, "배");
     await fillBlank(1, "사과");
     await confirm();

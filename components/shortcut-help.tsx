@@ -27,7 +27,7 @@ export const shortcutHelpContent: Record<ShortcutScreen, HelpContent> = {
   sets: { title: "세트", description: "과목으로 걸러보거나 이름·내용을 검색하고, 세트를 열거나 학습할 세트를 선택할 수 있어요.", rows: [common, { keys: "Tab / Shift+Tab", action: "세트와 버튼 사이 이동" }, { keys: "Enter / Space", action: "현재 선택된 버튼 실행" }, back] },
   "set-selection": { title: "세트 학습 선택", description: "원하는 세트를 고른 뒤 시작하세요.", rows: [common, { keys: "Esc", action: "세트 선택 취소" }, { keys: "Enter / Space", action: "현재 선택된 세트 또는 버튼 실행" }] },
   "study-ready": { title: "학습 준비", description: "이어하기, 처음부터 또는 학습 범위 정하기를 선택하세요.", rows: [common, { keys: "Esc", action: "과목 선택 화면으로 돌아가기" }, { keys: "Enter / Space", action: "현재 선택된 버튼 실행" }] },
-  "study-keywords": { title: "키워드 학습", description: "빈칸을 채우고, 오답은 같은 자리에서 다시 써보세요.", rows: [common, tab, hint, { keys: "Esc", action: "실전 모드의 타이머 일시정지·재개" }] },
+  "study-keywords": { title: "키워드 학습", description: "빈칸을 채우고, 오답은 같은 자리에서 다시 써보세요.", rows: [common, tab, { keys: "↑ / ↓", action: "이전 / 다음 빈칸으로 이동" }, hint, { keys: "Esc", action: "실전 모드의 타이머 일시정지·재개" }] },
   "study-table": { title: "표 학습", description: "빈칸 번호는 Tab으로 이동하는 순서와 같아요.", rows: [common, tableMove, arrows, hint, { keys: "Esc", action: "실전 모드의 타이머 일시정지·재개" }] },
   "study-write": { title: "전부 써보기", description: "자유롭게 답을 쓰고 확인하세요.", rows: [common, { keys: "Enter", action: "작성한 답 확인" }, { keys: "Shift+Enter", action: "입력칸 안에서 줄바꿈" }, { keys: "Esc", action: "실전에서는 일시정지·재개, 연습의 정답 확인 후에는 다시 쓰기" }] },
   "quiz-ready": { title: "퀴즈 준비", description: "과목을 고르고 퀴즈를 시작하세요.", rows: [common, { keys: "Tab / Shift+Tab", action: "선택 항목 사이 이동" }, { keys: "Enter / Space", action: "현재 선택된 버튼 실행" }, back] },

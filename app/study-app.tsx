@@ -6067,6 +6067,7 @@ export function QuizCloze({
   matchFeedback = false,
   correctionMode = false,
   studyReview = false,
+  verticalNavigation = false,
   guidedPractice = false,
   revealedKeywords = [],
   onChange,
@@ -6088,6 +6089,7 @@ export function QuizCloze({
   matchFeedback?: boolean;
   correctionMode?: boolean;
   studyReview?: boolean;
+  verticalNavigation?: boolean;
   guidedPractice?: boolean;
   revealedKeywords?: string[];
   onChange: (index: number, value: string) => void;
@@ -6493,6 +6495,14 @@ export function QuizCloze({
                   return;
                 }
 
+                if (verticalNavigation && (event.key === "ArrowUp" || event.key === "ArrowDown")
+                  && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+                  && selectionStart === selectionEnd) {
+                  const direction = event.key === "ArrowUp" ? -1 : 1;
+                  if (focusAvailableInput(currentIndex + direction, direction)) event.preventDefault();
+                  return;
+                }
+
                 if (isDesktop && (event.key === "ArrowLeft" || event.key === "Backspace") && selectionStart === 0 && selectionEnd === 0) {
                   if (focusAvailableInput(currentIndex - 1, -1)) event.preventDefault();
                   return;
@@ -6573,6 +6583,7 @@ export function ConnectionPractice({
   answers,
   checked,
   reverse,
+  verticalNavigation,
   onChange,
   onSubmit,
   onContinue,
@@ -6581,6 +6592,7 @@ export function ConnectionPractice({
   answers: string[];
   checked: boolean;
   reverse: boolean;
+  verticalNavigation?: boolean;
   onChange: (index: number, value: string) => void;
   onSubmit: (answers?: string[]) => void;
   onContinue: () => void;
@@ -6662,6 +6674,7 @@ export function ConnectionPractice({
             autoFocusFirst={!checked || !connected}
             autoFocusMobile
             correctionMode={checked && !connected}
+            verticalNavigation={verticalNavigation}
             partsOverride={checked && !connected ? correction.parts : promptParts}
             revealedKeywords={revealedKeywords}
             orderIndependentOverride={checked && !connected ? correctionOrder : true}
@@ -9858,6 +9871,7 @@ export default function StudyApp() {
                         answers={studyConnectionAnswers}
                         checked={studyConnectionChecked}
                         reverse={studyConnectionReverse}
+                        verticalNavigation
                         onChange={updateStudyConnectionAnswer}
                         onSubmit={gradeStudyConnection}
                         onContinue={finishStudyConnection}
@@ -9919,6 +9933,7 @@ export default function StudyApp() {
                                   inputLabel="오답 수정"
                                   correctionMode
                                   studyReview
+                                  verticalNavigation
                                   matchFeedback
                                   onChange={(index, value) => {
                                     if (studyPausedRef.current) return;
@@ -9938,6 +9953,7 @@ export default function StudyApp() {
                                   answers={studyKeywordAnswers}
                                   checked={answered}
                                   studyReview
+                                  verticalNavigation
                                   autoFocusFirst={!sectionAnnouncement && !dialogOpen && !bulkOpen}
                                   hints={studyHints}
                                   guidedPractice={studySessionMode === "practice"}
