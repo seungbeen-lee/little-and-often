@@ -74,6 +74,24 @@ try {
     const fillBlank = (index, value) => blankAt(index).fill(value);
     const activeBlank = () => page.evaluate(() => document.activeElement?.getAttribute("data-cloze-index"));
     const grade = () => page.getByRole("button", { name: "채점하기", exact: true }).click();
+    const expectReviewTypography = async correction => {
+      const copy = page.locator(".study-keyword-attempt .is-study-review");
+      await copy.waitFor();
+      const styles = await copy.evaluate(node => {
+        const style = element => element && getComputedStyle(element).fontSize;
+        return {
+          body: style(node),
+          text: style(node.querySelector(":scope > span:not([class])")),
+          matched: style(node.querySelector(".cloze-inline-answer.is-review-text")),
+          input: style(node.querySelector("input")),
+          guide: style(node.querySelector(".cloze-field-hint")),
+          mirror: style(node.querySelector(".cloze-field-size")),
+        };
+      });
+      const size = width <= 760 ? "16px" : "18px";
+      assert.deepEqual(styles, { body: size, text: size, matched: size,
+        input: correction ? size : null, guide: correction ? size : null, mirror: correction ? size : null });
+    };
     const expectBlanks = async count => {
       assert.equal(await blank.count(), count);
       assert.deepEqual(await blank.evaluateAll(inputs => inputs.map(input => input.value)), Array(count).fill(""));
@@ -99,6 +117,7 @@ try {
     await page.keyboard.press("ArrowUp");
     assert.equal(await activeBlank(), "1");
     await grade();
+    await expectReviewTypography(true);
     await blankAt(0).click();
     await page.keyboard.press("ArrowDown");
     assert.equal(await activeBlank(), "1");
@@ -133,6 +152,7 @@ try {
     await showQuestion("오늘 과학 문제");
     await expectBlanks(1);
     await fillBlank(0, "사과");
+    await expectReviewTypography(false);
     await confirm();
     await page.getByRole("heading", { name: "오늘 복습을 마쳤어요" }).waitFor();
     await page.getByRole("button", { name: "오답 카드로 돌아가기" }).click();

@@ -6140,7 +6140,7 @@ export function QuizCloze({
   useLayoutEffect(() => {
     const copy = clozeRootRef.current;
     if (!studyReviewTypography || !copy) return;
-    const desktop = window.matchMedia("(min-width: 760px)");
+    const mobile = window.matchMedia("(max-width: 760px)");
     const reset = () => {
       copy.style.removeProperty("--study-review-size");
       copy.style.removeProperty("--study-review-leading");
@@ -6148,7 +6148,7 @@ export function QuizCloze({
     const fit = () => {
       reset();
       const fits = () => copy.scrollHeight <= copy.clientHeight + 1;
-      if (!desktop.matches || !copy.clientHeight || fits()) return;
+      if (mobile.matches || !copy.clientHeight || fits()) return;
       // Preserve a consistent size if tightening line spacing is enough.
       copy.style.setProperty("--study-review-leading", "1.58");
       for (const size of [17, 16]) {
@@ -6159,13 +6159,13 @@ export function QuizCloze({
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(copy);
-    desktop.addEventListener("change", fit);
+    mobile.addEventListener("change", fit);
     let active = true;
     void document.fonts?.ready.then(() => { if (active) fit(); });
     return () => {
       active = false;
       observer.disconnect();
-      desktop.removeEventListener("change", fit);
+      mobile.removeEventListener("change", fit);
       reset();
     };
   }, [studyReviewTypography, card.id, card.answerFormat, card.answer]);

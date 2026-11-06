@@ -868,17 +868,11 @@ body:has(.stacked-dialog) [data-radix-popper-content-wrapper] { z-index: 70 !imp
 .study-keyword-mode.is-answered .study-keyword-attempt.answer-density-medium .quiz-cloze-copy { font-size: clamp(13.5px, 1.35vw, 16.5px); line-height: 1.85; }
 .study-keyword-mode.is-answered .study-keyword-attempt.answer-density-long .quiz-cloze-copy { font-size: clamp(13px, 1.2vw, 15px); line-height: 1.7; }
 .study-keyword-mode.is-answered .study-keyword-attempt .quiz-cloze-copy.is-study-review { font-size: var(--study-review-size, 18px); line-height: var(--study-review-leading, 1.72); }
-.is-study-correction { --study-correction-size: 1em; }
-.is-study-correction .cloze-field.is-correction :is(input, .cloze-field-hint, .cloze-field-size),
-.quiz-cloze-copy.is-study-correction .cloze-inline-answer.is-review-text { font-size: var(--study-correction-size); }
-@media (max-width: 759px) {
-  .study-keyword-mode.is-answered .study-keyword-attempt .quiz-cloze-copy.is-study-review { font-size: 15px; line-height: 1.75; }
-  .study-keyword-mode.is-answered .study-keyword-attempt.answer-density-medium .quiz-cloze-copy.is-study-review { font-size: 14.5px; line-height: 1.7; }
-  .study-keyword-mode.is-answered .study-keyword-attempt.answer-density-long .quiz-cloze-copy.is-study-review { font-size: 14px; line-height: 1.65; }
-}
+.is-study-correction .cloze-field.is-correction { min-width: min(100%, 5em); }
+.is-study-correction .cloze-field.is-correction :is(input, .cloze-field-hint, .cloze-field-size) { font-size: inherit; font-weight: 650; }
 @media (max-width: 760px) {
-  .is-study-correction { --study-correction-size: 17px; }
-  .is-study-correction .cloze-field.is-correction :is(input, .cloze-field-hint, .cloze-field-size) { font-size: var(--study-correction-size) !important; }
+  .study-keyword-mode.is-answered .study-keyword-attempt .quiz-cloze-copy.is-study-review { font-size: 16px; line-height: 1.65; }
+  .is-study-correction .cloze-field.is-correction :is(input, .cloze-field-hint, .cloze-field-size) { font-size: inherit !important; }
 }
 .study-keyword-return-overlay { position: absolute; z-index: 2; inset: 0 0 12px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
 .study-keyword-return-overlay > span { position: absolute; top: 50%; left: 50%; display: grid; place-items: center; color: #9ca19e; opacity: .55; transform: translate(-50%, -50%); }
