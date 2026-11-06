@@ -2,7 +2,7 @@
 
 import { FormEvent, Fragment, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useVisibleViewport } from "@/components/use-visible-viewport";
+import { useMobileTableLayout, useVisibleViewport } from "@/components/use-visible-viewport";
 import { clearManualEditorBold, toggleCaretBold, usePlainEditorTyping } from "@/components/use-plain-editor-typing";
 import { copyCardSelection } from "@/lib/editor-clipboard";
 import {
@@ -2079,8 +2079,8 @@ export function fullWriteKeywordMatches(card: StudyCard, answer: string, cells: 
   })) : keywordMatches(card.keywords, answer);
 }
 
-export function FullTableWriting({ card, values, onChange, disabled, tableTabOrder = "vertical" }: {
-  card: StudyCard; values: Record<string, string>; onChange: (values: Record<string, string>, answer: string) => void; disabled: boolean; tableTabOrder?: TableTabOrder;
+export function FullTableWriting({ card, values, onChange, disabled, autoFocus = true, tableTabOrder = "vertical" }: {
+  card: StudyCard; values: Record<string, string>; onChange: (values: Record<string, string>, answer: string) => void; disabled: boolean; autoFocus?: boolean; tableTabOrder?: TableTabOrder;
 }) {
   const table = readTable(card.answerFormat)!;
   const entries = sortedCells(table, tableTabOrder === "vertical").filter(cell => plainCell(cell.format).trim());
@@ -2089,12 +2089,10 @@ export function FullTableWriting({ card, values, onChange, disabled, tableTabOrd
     const input = refs.current[id];
     if (input) { input.focus({ preventScroll: true }); revealMobileStudyInput(input); }
   };
-  useEffect(() => {
-    if (disabled) return;
-    const frame = requestAnimationFrame(() => { if (entries[0]) focus(entries[0].id); });
-    return () => cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    if (autoFocus && !disabled && entries[0]) focus(entries[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card.id, disabled]);
+  }, [card.id, disabled, autoFocus]);
   return <div className="full-table-writing">
     <CardImages images={card.media?.answer} position="before" />
     <TableGrid doc={table} renderCell={cell => !plainCell(cell.format).trim() ? null : <textarea
@@ -2279,7 +2277,7 @@ function GuidedCopyField({ expected, value, label, onChange, onKeyDown, onFocus,
   </span>;
 }
 
-export function GuidedFullPractice({ card, completed, onComplete, tableTabOrder = "vertical" }: { card: StudyCard; completed: boolean; onComplete: () => void; tableTabOrder?: TableTabOrder }) {
+export function GuidedFullPractice({ card, completed, onComplete, autoFocus = true, tableTabOrder = "vertical" }: { card: StudyCard; completed: boolean; onComplete: () => void; autoFocus?: boolean; tableTabOrder?: TableTabOrder }) {
   const table = readTable(card.answerFormat);
   const entries = table
     ? sortedCells(table, tableTabOrder === "vertical").map((cell) => ({ id: cell.id, expected: plainCell(cell.format) })).filter((entry) => entry.expected.length > 0)
@@ -2289,14 +2287,6 @@ export function GuidedFullPractice({ card, completed, onComplete, tableTabOrder 
   const inputRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const expectedById = new Map(entries.map((entry) => [entry.id, entry.expected]));
   const unfinishedIds = entries.filter((entry) => composingIds.has(entry.id) || !matchesGuidedCopy(entry.expected, values[entry.id] ?? "")).map((entry) => entry.id);
-
-  useLayoutEffect(() => {
-    if (completed) return;
-    const frame = requestAnimationFrame(() => inputRefs.current[unfinishedIds[0]]?.focus({ preventScroll: true }));
-    return () => cancelAnimationFrame(frame);
-    // Only focus when this card/rewrite opens, not after every character.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card.id, completed]);
 
   const revealFocused = (node: HTMLTextAreaElement) => {
     if (revealMobileStudyInput(node)) return;
@@ -2320,6 +2310,11 @@ export function GuidedFullPractice({ card, completed, onComplete, tableTabOrder 
     node.setSelectionRange(end, end);
     revealFocused(node);
   };
+  useLayoutEffect(() => {
+    if (autoFocus && !completed) focusEntry(unfinishedIds[0] ?? null);
+    // Only focus when this card/rewrite opens, not after every character.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id, completed, autoFocus]);
   const update = (id: string, value: string, composing: boolean) => {
     const next = { ...values, [id]: value };
     // Some Korean IMEs keep the final syllable composing until the next key.
@@ -6103,7 +6098,8 @@ export function QuizCloze({
   const composingIndex = composition?.hintKey === hintResetKey ? composition.index : null;
   const setComposingIndex = (index: number | null) => setComposition({ index, hintKey: hintResetKey });
   const viewport = useVisibleViewport();
-  const mobileTable = Boolean(table && viewport.width > 0 && viewport.width <= 760);
+  const mobileLayout = useMobileTableLayout();
+  const mobileTable = Boolean(table && mobileLayout);
   const [activeMobileIndex, setActiveMobileIndex] = useState<number | null>(null);
   const mobileInputRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const latestHintsRef = useRef(hints);
@@ -6196,14 +6192,13 @@ export function QuizCloze({
   const focusInput = (index: number) => {
     if (mobileTable) {
       if (index < 0 || index >= blankCount || evaluations[index]?.matched || checked) return false;
+      const input = mobileInputRefs.current[index];
+      if (!input?.isConnected || input.disabled) return false;
       setActiveMobileIndex(index);
       setComposingIndex(null);
-      onFocusIndex?.(index);
-      const input = mobileInputRefs.current[index];
-      input?.focus({preventScroll:true});
-      input?.setSelectionRange(input.value.length,input.value.length);
-      window.requestAnimationFrame(() => revealMobileBlank(index));
-      return Boolean(input);
+      input.focus({preventScroll:true});
+      input.setSelectionRange(input.value.length,input.value.length);
+      return true;
     }
     const referencedInput = inputRefs.current[index];
     const input = referencedInput?.isConnected
@@ -6229,28 +6224,14 @@ export function QuizCloze({
   };
 
   useLayoutEffect(() => {
-    const desktop = window.matchMedia("(min-width: 761px)").matches;
-    if (!autoFocusFirst || checked || (!showGuide && !autoFocusMobile && !desktop)) return;
-    // Focus in the transition commit, while iOS still has the tap's activation.
-    // focusin/visualViewport then reveal this field after keyboard layout settles.
-    if (showGuide || !desktop) {
-      const first = table ? mobileBlankOrder.map((index) => clozeRootRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-cloze-index="${index}"]`)).find(Boolean) : null;
-      const input = first ?? clozeRootRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>("input[data-cloze-index], textarea[data-cloze-index]");
-      if (input instanceof HTMLInputElement) focusQuizInputAtEnd(input);
-      else if (input) {
-        input.focus({ preventScroll: true });
-        input.setSelectionRange(input.value.length, input.value.length);
-      }
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      if (table) focusTableInputFrom(mobileBlankOrder[0], true);
-      else focusAvailableInput(0, 1);
-    });
-    return () => window.cancelAnimationFrame(frame);
+    if (!autoFocusFirst || checked || (!showGuide && !autoFocusMobile && mobileLayout)) return;
+    // Focus as soon as the fields are committed: waiting for a frame leaves
+    // keyboard events on the old button or document body. Scrolling can wait.
+    if (table) focusTableInputFrom(mobileBlankOrder[0], true);
+    else focusAvailableInput(0, 1);
     // 카드나 안내 화면이 바뀔 때만 첫 빈칸으로 이동해요.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFocusFirst, autoFocusMobile, card.id, checked, showGuide]);
+  }, [autoFocusFirst, autoFocusMobile, card.id, checked, showGuide, mobileLayout]);
 
   const queueNextIfMatched = (index: number, value: string) => {
     pendingMatchedAnswerRef.current = planMatchedQuizAnswer(keywords, answers, index, value, orderIndependent);
@@ -6349,18 +6330,13 @@ export function QuizCloze({
       onSubmit(pending.answers);
       return;
     }
-    if (mobileTable) {
-      // Do not flushSync inside an effect; defer the focus switch until this commit completes.
-      window.requestAnimationFrame(() => { if (table) focusInput(pending.nextIndex); else if (!focusAvailableInput(pending.nextIndex, 1)) focusAvailableInput(0, 1); });
-      return;
-    }
     if (table) { focusInput(pending.nextIndex); return; }
     if (!focusAvailableInput(pending.nextIndex, 1)) {
       focusAvailableInput(0, 1);
     }
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pending = pendingMatchedAnswerRef.current;
     if (!pending) return;
     pendingMatchedAnswerRef.current = null;
@@ -9251,11 +9227,12 @@ export default function StudyApp() {
     suggestedResultButtonRef.current?.focus({ preventScroll: true });
   }, [answered, current?.id, decisionSuggestedResult, mode, studyConnectionActive, studyKeywordMode, studyCorrectionsComplete]);
 
-  useEffect(() => {
-    if (mode !== "write" || answered || !current || dialogOpen || bulkOpen || sectionAnnouncement) return;
-    const frame = window.requestAnimationFrame(() => typedAnswerRef.current?.focus({ preventScroll: true }));
-    return () => window.cancelAnimationFrame(frame);
-  }, [answered, bulkOpen, current, dialogOpen, mode, sectionAnnouncement]);
+  const studyCardId = current?.id;
+  const studyAnswerAutoFocus = !dialogOpen && !bulkOpen && !sectionAnnouncement;
+  useLayoutEffect(() => {
+    if (mainTab !== "study" || mode !== "write" || answered || !studyCardId || studyPaused || !studyAnswerAutoFocus) return;
+    typedAnswerRef.current?.focus({ preventScroll: true });
+  }, [answered, studyCardId, mainTab, mode, studyPaused, studyAnswerAutoFocus]);
 
   useEffect(() => {
     if (mode !== "write" || studySessionMode !== "practice" || !answered || studyConnectionActive || !current || dialogOpen || bulkOpen) return;
@@ -9812,7 +9789,7 @@ export default function StudyApp() {
 
                     <section className={`answer-panel ${answered ? "is-visible" : ""}${currentStudyTable ? " is-table-session" : ""}`}>
                       {studyGuidedFull ? (
-                        <GuidedFullPractice key={`guided-full:${current.id}:${studyRound}:${studyRewriteMode}`} card={current} completed={answered} onComplete={completeGuidedFullPractice} tableTabOrder={tableTabOrder} />
+                        <GuidedFullPractice key={`guided-full:${current.id}:${studyRound}:${studyRewriteMode}`} card={current} completed={answered} onComplete={completeGuidedFullPractice} autoFocus={studyAnswerAutoFocus} tableTabOrder={tableTabOrder} />
                       ) : mode === "reveal" ? (
                         <div
                           className={`study-keyword-mode${answered && currentStudyKeywords.length > 0 ? " is-answered" : ""}${currentStudyTable ? " is-table-session" : ""}`}
@@ -9897,7 +9874,7 @@ export default function StudyApp() {
                               {!answered && <small className="desktop-shortcut-help">Enter로 확인 · Shift+Enter로 줄바꿈</small>}
                             </span>
                             <div className="typed-input-wrap">
-                              {currentStudyTable ? <FullTableWriting key={current.id} card={current} values={fullTableAnswers} onChange={(values, answer) => { if (studyPausedRef.current) return; setFullTableAnswers(values); setTypedAnswer(answer); }} disabled={answered || studyPaused} tableTabOrder={tableTabOrder} /> : <Textarea
+                              {currentStudyTable ? <FullTableWriting key={current.id} card={current} values={fullTableAnswers} onChange={(values, answer) => { if (studyPausedRef.current) return; setFullTableAnswers(values); setTypedAnswer(answer); }} disabled={answered || studyPaused} autoFocus={studyAnswerAutoFocus} tableTabOrder={tableTabOrder} /> : <Textarea
                                 ref={typedAnswerRef}
                                 value={typedAnswer}
                                 onChange={(e) => { if (!studyPausedRef.current) setTypedAnswer(e.target.value); }}

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ConnectionPractice, GuidedFullPractice, QuizCloze, KeywordAnswerLabel, KeywordReviewMaterials, evaluateQuizAnswers, quizInlineCorrections, quizAnswerOrder, areQuizCorrectionsComplete } from "../../app/study-app";
+import { ConnectionPractice, FullTableWriting, GuidedFullPractice, QuizCloze, KeywordAnswerLabel, KeywordReviewMaterials, evaluateQuizAnswers, quizInlineCorrections, quizAnswerOrder, areQuizCorrectionsComplete } from "../../app/study-app";
 import { cellParts, createTable, editCell, encodeTable, tableParts, tableText, type TableTabOrder } from "../../lib/table-card";
 import { ShortcutHelp } from "../../components/shortcut-help";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../../components/ui/dialog";
@@ -37,6 +37,8 @@ const parts = isTable ? tableParts(table) : linkedAnswer ? cellParts(linkedForma
 ]);
 
 function Fixture() {
+  const [started, setStarted] = useState(!kind.startsWith("first-input-"));
+  const [fullValues, setFullValues] = useState<Record<string, string>>({});
   const [tableTabOrder, setTableTabOrder] = useState<TableTabOrder>("vertical");
   const [fullComplete, setFullComplete] = useState(false);
   const [answers, setAnswers] = useState<string[]>([]);
@@ -58,6 +60,9 @@ function Fixture() {
     setSubmissions(n => n + 1);
     setChecked(true);
   };
+  if (!started) return <button onClick={() => setStarted(true)}>입력 시작</button>;
+  if (kind === "first-input-full-table") return <FullTableWriting card={card} values={fullValues} onChange={setFullValues} disabled={false} />;
+  if (kind === "first-input-guided") return <GuidedFullPractice card={card} completed={false} onComplete={() => {}} />;
   return <main style={{ padding: 20, width: "100%", boxSizing: "border-box" }}>
     <output data-testid="submissions">{submissions}</output><output data-testid="continued">{continued}</output>
     {navigationTable && <ShortcutHelp screen="study-table" tableTabOrder={tableTabOrder} onTableTabOrderChange={setTableTabOrder} />}
@@ -65,7 +70,7 @@ function Fixture() {
     : kind === "connection" ? <ConnectionPractice card={card} answers={answers} checked={checked} reverse={false} onChange={change} onSubmit={grade} onContinue={() => setContinued(n => n + 1)} /> : <section className={`study-keyword-mode${isTable ? " is-table-session" : ""}${checked ? " is-answered" : ""}`} style={{ height: 500 }}>
       <div className="quiz-answer-heading"><KeywordAnswerLabel result={checked ? evaluations.every(e => e.matched) ? "correct" : "incorrect" : null} /></div>
       <QuizCloze card={card} partsOverride={correcting ? correction.parts : parts} answers={correcting ? correctionAnswers : answers}
-        checked={checked && !correcting} correctionMode={correcting} guidedPractice={guidedKeyword} autoFocusFirst tableTabOrder={tableTabOrder}
+        checked={checked && !correcting} correctionMode={correcting} guidedPractice={guidedKeyword} autoFocusFirst autoFocusMobile={kind.startsWith("first-input-")} tableTabOrder={tableTabOrder}
         hints={kind.startsWith("hint-") ? { 0: { stage: 2, keyword: words[0], text: "", revision: 0 } } : undefined}
         orderIndependentOverride={false} mobileSubmitOnLast={isTable}
         onChange={correcting ? (index, value) => setCorrectionAnswers(previous => Object.assign([...previous], { [index]: value })) : change}
