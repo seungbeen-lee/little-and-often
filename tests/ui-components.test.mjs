@@ -290,6 +290,36 @@ test("single-keyword dash bullets allow reordered answers even without a space a
   assert.ok(evaluateQuizAnswers(keys, ["진로", "능력", "적성"], quizAnswerOrder(parts)).every(item => item.matched));
 });
 
+test("flags common particle changes without accepting them or taking a keyword from another group", async () => {
+  const { evaluateQuizAnswers, quizInlineCorrections, tableAttemptResults } = await vite.ssrLoadModule("/app/study-app.tsx");
+  for (const [expected, answer, particleMismatch] of [
+    ["학생의 역량을 기르기", "학생이 역량 기르기", true],
+    ["학교에서 협력", "학교에 협력", true],
+    ["물을", "물", true],
+    ["기초 소양", "기본 소양", undefined],
+    ["사과", "사", undefined],
+    ["학생의 역량", "", undefined],
+  ]) {
+    assert.deepEqual(evaluateQuizAnswers([expected], [answer], false).map(result => [result.matched, result.particleMismatch]), [[false, particleMismatch]]);
+  }
+  assert.deepEqual(evaluateQuizAnswers(["학생의 역량"], ["‘학생의 역량’"], false), [{ matched: true, expectedKeyword: "학생의 역량" }]);
+  const keywords = ["학생의 역량", "교사의 역할", "학교의 지원"];
+  const answers = ["교사가 역할", "학생이 역량", "학교의 지원"];
+  const order = [0, 0, 1];
+  const evaluations = evaluateQuizAnswers(keywords, answers, order);
+  assert.deepEqual(evaluations, [
+    { matched: false, expectedKeyword: keywords[1], particleMismatch: true },
+    { matched: false, expectedKeyword: keywords[0], particleMismatch: true },
+    { matched: true, expectedKeyword: keywords[2] },
+  ]);
+  assert.ok(evaluateQuizAnswers(keywords, ["학교에 지원", "교사의 역할", "학생이 역량"], order).every(result => !result.particleMismatch));
+  assert.equal(evaluateQuizAnswers([keywords[0], keywords[1]], ["학생이 역량", keywords[0]], true)[0].particleMismatch, undefined);
+  const parts = keywords.map((keyword, index) => ({ type: "blank", keyword, cellId: index === 2 ? "b" : "a", keywordId: `table:${index}` }));
+  assert.deepEqual(tableAttemptResults(parts, evaluations, order).map(result => result.keywordKey), ["table:1", "table:0", "table:2"]);
+  const correction = quizInlineCorrections(parts, evaluations, answers, order);
+  assert.deepEqual(correction.parts.filter(part => part.particleMismatch).map(part => part.keyword), [keywords[1], keywords[0]]);
+});
+
 test("only exchanges list answers with identical surrounding context", async () => {
   const { quizAnswerOrder, evaluateQuizAnswers, quizHintKeywords, planMatchedQuizAnswer, quizInlineCorrections, quizCorrectionOrder, quizCorrectionKeywords, areQuizCorrectionsComplete } = await vite.ssrLoadModule("/app/study-app.tsx");
   const keywords = ["교과 통합", "가치 통합", "사회 통합"];

@@ -65,6 +65,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { extractBoldKeywords, normalizeAnswerFormat, normalizeImportance, normalizeQuestionFormat } from "@/lib/card-data";
 import { dailyAccuracyLabel, koreanStudyDay, subjectStudiedToday, type DailyStudyStats } from "@/lib/daily-study-stats";
 import { advanceTodayReview } from "@/lib/today-review";
+import { differsOnlyByKoreanParticles } from "@/lib/korean-particle";
 import { CARD_CONTENT_TYPES, DEFAULT_CARD_CONTENT_TYPE, normalizeCardContentType, type CardContentType } from "@/lib/card-content-types";
 import { archiveReviewDueAt, isArchiveReviewDue, nextArchiveReviewStage, nextReviewProgress } from "@/lib/archive-schedule";
 import { SITE_NAME } from "@/lib/site-branding";
@@ -159,11 +160,12 @@ type QuizReason = "recommended" | "archive-review" | "keyword-review";
 type QuizItem = { cardId: number; reason: QuizReason; keyword?: string; keywordKey?: string };
 type QuizRound = "main" | "retry";
 type QuizAnswerOrder = boolean | readonly number[];
+type QuizEvaluation = { matched: boolean; expectedKeyword: string; particleMismatch?: true };
 type TodayReviewRetry = { source: string; parts: ClozePart[]; order: QuizAnswerOrder };
 type QuizHintStage = 1 | 2;
 type QuizBlankHint = { stage: QuizHintStage; keyword: string; text: string; keywordKey?: string; revision?: number };
 type QuizCardHints = Partial<Record<number, QuizBlankHint>>;
-type ClozePart = TablePart;
+type ClozePart = TablePart & { particleMismatch?: true };
 type StudyRunAttempt = {
   cardId: number;
   question: string;
@@ -2001,7 +2003,7 @@ export function areQuizCorrectionsComplete(keywords: string[], answers: string[]
 
 export function quizInlineCorrections(
   parts: ClozePart[],
-  evaluations: Array<{ matched: boolean; expectedKeyword: string }>,
+  evaluations: QuizEvaluation[],
   originalAnswers: string[],
   order = quizAnswerOrder(parts)
 ) {
@@ -2018,7 +2020,10 @@ export function quizInlineCorrections(
     }
     answers.push("");
     const mapped = mappedResults[index];
-    return { ...part, type: "blank", keyword: evaluation?.expectedKeyword || part.keyword, ...(part.keywordId && mapped?.keywordKey ? {keywordId:mapped.keywordKey} : {}) };
+    const { particleMismatch: _previousMismatch, ...blank } = part;
+    return { ...blank, keyword: evaluation?.expectedKeyword || part.keyword,
+      ...(evaluation?.particleMismatch ? { particleMismatch: true } : {}),
+      ...(part.keywordId && mapped?.keywordKey ? {keywordId:mapped.keywordKey} : {}) };
   });
   return { parts: correctionParts, answers };
 }
@@ -2574,16 +2579,18 @@ export function quizCorrectionOrder(order: QuizAnswerOrder, evaluations: Array<{
   return typeof order === "boolean" ? order : order.filter((_, index) => !evaluations[index]?.matched);
 }
 
-export function evaluateQuizAnswers(keywords: string[], answers: string[], orderIndependent: QuizAnswerOrder) {
+export function evaluateQuizAnswers(keywords: string[], answers: string[], orderIndependent: QuizAnswerOrder): QuizEvaluation[] {
   if (!orderIndependent) {
-    return keywords.map((keyword, index) => ({
-      matched: normalizeForMatch(answers[index] ?? "") === normalizeForMatch(keyword),
-      expectedKeyword: keyword,
-    }));
+    return keywords.map((keyword, index) => {
+      const answer = answers[index] ?? "";
+      const matched = normalizeForMatch(answer) === normalizeForMatch(keyword);
+      const particleMismatch = !matched && differsOnlyByKoreanParticles(keyword, answer);
+      return { matched, expectedKeyword: keyword, ...(particleMismatch ? { particleMismatch: true } : {}) };
+    });
   }
 
   const remaining = keywords.map((keyword, index) => ({ keyword, normalized: normalizeForMatch(keyword), group: quizAnswerGroup(orderIndependent, index) }));
-  const evaluations = keywords.map((_, answerIndex) => {
+  const evaluations = keywords.map<QuizEvaluation>((_, answerIndex) => {
     const answer = answers[answerIndex] ?? "";
     const normalizedAnswer = normalizeForMatch(answer);
     const matchIndex = normalizedAnswer ? remaining.findIndex((item) => item.group === quizAnswerGroup(orderIndependent, answerIndex) && item.normalized === normalizedAnswer) : -1;
@@ -2592,8 +2599,20 @@ export function evaluateQuizAnswers(keywords: string[], answers: string[], order
     return { matched: true, expectedKeyword: matchedKeyword.keyword };
   });
 
+  // Reserve exact matches first, then pair particle-only misses with one
+  // remaining keyword in the same unordered group.
+  for (const [index, evaluation] of evaluations.entries()) {
+    const answer = answers[index] ?? "";
+    if (evaluation.matched || !answer) continue;
+    const group = quizAnswerGroup(orderIndependent, index);
+    const candidate = remaining.findIndex(item => item.group === group && differsOnlyByKoreanParticles(item.keyword, answer));
+    if (candidate < 0) continue;
+    const [keyword] = remaining.splice(candidate, 1);
+    evaluations[index] = { matched: false, expectedKeyword: keyword.keyword, particleMismatch: true };
+  }
+
   return evaluations.map((evaluation, index) => {
-    if (evaluation.matched) return evaluation;
+    if (evaluation.matched || evaluation.particleMismatch) return evaluation;
     const remainingIndex = remaining.findIndex((item) => item.group === quizAnswerGroup(orderIndependent, index));
     return { matched: false, expectedKeyword: remainingIndex < 0 ? "" : remaining.splice(remainingIndex, 1)[0].keyword };
   });
@@ -2874,7 +2893,9 @@ export function tableAttemptResults(parts: ClozePart[], evaluations: Array<{matc
   for (const matched of [true,false]) evaluations.forEach((evaluation,index) => {
     if(evaluation.matched !== matched)return;
     const group=quizAnswerGroup(order,index);
-    const position=available.findIndex((item)=>item.group===group && (!matched || normalizeForMatch(item.part.keyword)===normalizeForMatch(evaluation.expectedKeyword)));
+    const expected = normalizeForMatch(evaluation.expectedKeyword);
+    const position = available.findIndex(item => item.group === group
+      && (!expected || normalizeForMatch(item.part.keyword) === expected));
     if(position>=0)targets.set(index,available.splice(position,1)[0].part);
   });
   return evaluations.map((evaluation,index) => {
@@ -6399,6 +6420,11 @@ export function QuizCloze({
         const currentIndex = parts.slice(0, index).filter((item) => item.type === "blank").length;
         const currentAnswer = answers[currentIndex] ?? "";
         const evaluation = evaluations[currentIndex] ?? { matched: false, expectedKeyword: part.keyword };
+        const particleMismatch = !evaluation.matched && ((correctionMode && part.particleMismatch)
+          || (composingIndex !== currentIndex && evaluation.particleMismatch));
+        const particleClass = particleMismatch ? " is-particle-mismatch" : "";
+        const particleLabel = particleMismatch ? "조사 차이" : undefined;
+        const blankLabel = `${blankNumber(currentIndex)}번째 ${inputLabel}${particleLabel ? ` · ${particleLabel}` : ""}`;
         const savedHint = hints[currentIndex];
         const hintKeyword = hintKeywords[currentIndex] || evaluation.expectedKeyword || savedHint?.keyword || part.keyword;
         const hint = savedHint
@@ -6411,14 +6437,14 @@ export function QuizCloze({
         if (mobileTable && !checked && !(evaluation.matched && composingIndex !== currentIndex)) {
           const hintTail = showGuide ? guideTail : hint ? remainingQuizHint(hint.keyword,hint.stage,currentAnswer,composingIndex===currentIndex) : "";
           return <span key={`quiz-blank-${index}`} className={showGuide ? "table-inline-review" : undefined}>
-            <span data-table-blank={currentIndex} className={`table-inline-blank ${evaluation.matched ? "is-correct" : "is-missed"}${activeMobileIndex===currentIndex?" is-active":""}`}>
+            <span data-table-blank={currentIndex} className={`table-inline-blank ${evaluation.matched ? "is-correct" : "is-missed"}${activeMobileIndex===currentIndex?" is-active":""}${particleClass}`} title={particleLabel}>
             <span className="table-inline-measure" aria-hidden="true">{currentAnswer + hintTail || `빈칸 ${blankNumber(currentIndex)}`}{"\u200b"}</span>
             {(hint || showGuide) && <span className="table-inline-measure table-inline-guide-size" aria-hidden="true">{showGuide ? part.keyword : hint!.keyword}</span>}
             <textarea key={`mobile-${currentIndex}:${savedHint?.revision ?? 0}`} ref={(node)=>{mobileInputRefs.current[currentIndex]=node;}}
               data-cloze-index={currentIndex} data-mobile-cloze-card={card.id} value={currentAnswer}
               rows={1} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
               enterKeyHint={mobileSubmitOnLast && currentIndex===lastMobileBlankIndex ? "done" : "next"}
-              aria-label={`${blankNumber(currentIndex)}번째 ${inputLabel}`} aria-describedby={showGuide ? correctionId : hint ? hintId : undefined}
+              aria-label={blankLabel} aria-describedby={showGuide ? correctionId : hint ? hintId : undefined}
               placeholder={hint || showGuide ? "" : `빈칸 ${blankNumber(currentIndex)}`}
               onFocus={()=>{setActiveMobileIndex(currentIndex);onFocusIndex?.(currentIndex);window.requestAnimationFrame(()=>revealMobileBlank(currentIndex));}}
               onCompositionStart={()=>setComposingIndex(currentIndex)}
@@ -6446,8 +6472,9 @@ export function QuizCloze({
         if ((evaluation.matched && composingIndex !== currentIndex) || checked) {
           return (
             <span
-              className={`cloze-inline-answer ${evaluation.matched ? "is-correct" : "is-incorrect"}${showGuide || checked ? " is-review-text" : ""}${evaluation.matched && newlyMatchedIndices.has(currentIndex) ? " is-just-matched" : ""}`}
+              className={`cloze-inline-answer ${evaluation.matched ? "is-correct" : "is-incorrect"}${showGuide || checked ? " is-review-text" : ""}${evaluation.matched && newlyMatchedIndices.has(currentIndex) ? " is-just-matched" : ""}${particleClass}`}
               key={`quiz-blank-${index}`}
+              title={particleLabel}
             >
               {currentAnswer.trim() || "미입력"}
             </span>
@@ -6455,7 +6482,7 @@ export function QuizCloze({
         }
 
         const field = (
-          <span className={`cloze-field is-missed${hint || showGuide ? " has-hint" : ""}${showGuide ? " is-correction" : ""}`} key={`quiz-blank-${index}`}>
+          <span className={`cloze-field is-missed${hint || showGuide ? " has-hint" : ""}${showGuide ? " is-correction" : ""}${particleClass}`} key={`quiz-blank-${index}`} title={particleLabel}>
             {(hint || showGuide) && <span className="cloze-field-size" aria-hidden="true">{showGuide ? part.keyword.normalize("NFC") : hint!.keyword.normalize("NFC")}</span>}
             <Input
               key={`input-${currentIndex}-${savedHint?.revision ?? 0}`}
@@ -6528,7 +6555,7 @@ export function QuizCloze({
               }}
               enterKeyHint={table ? currentIndex === lastMobileBlankIndex ? "done" : "next" : currentIndex < blankCount - 1 ? "next" : "done"}
               placeholder={hint || showGuide ? "" : `빈칸 ${blankNumber(currentIndex)}`}
-              aria-label={`${blankNumber(currentIndex)}번째 ${inputLabel}`}
+              aria-label={blankLabel}
               aria-describedby={showGuide ? correctionId : hint ? hintId : undefined}
             />
             {hint && (

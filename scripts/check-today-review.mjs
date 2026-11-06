@@ -116,8 +116,13 @@ try {
     assert.equal(await blankAt(2).evaluate(input => input.selectionStart), "오답".length);
     await page.keyboard.press("ArrowUp");
     assert.equal(await activeBlank(), "1");
+    await fillBlank(2, "사과를");
+    assert.doesNotMatch(await blankAt(1).getAttribute("aria-label"), /조사 차이/);
+    assert.match(await blankAt(2).getAttribute("aria-label"), /조사 차이/);
+    await page.locator(".cloze-field.is-particle-mismatch").waitFor();
     await grade();
     await expectReviewTypography(true);
+    assert.equal(await page.locator(".cloze-field.is-correction.is-particle-mismatch").count(), 1);
     await blankAt(0).click();
     await page.keyboard.press("ArrowDown");
     assert.equal(await activeBlank(), "1");
@@ -146,6 +151,16 @@ try {
     await showQuestion("오늘 수학 문제");
     await expectBlanks(1);
     assert.equal(await blank.evaluate(input => input.closest("[data-table-cell-id]")?.getAttribute("data-table-cell-id")), "c2");
+    await fillBlank(0, "연필로");
+    assert.match(await blank.getAttribute("aria-label"), /조사 차이/);
+    const blueField = width <= 760
+      ? page.locator(".table-inline-blank.is-particle-mismatch")
+      : page.locator(".cloze-field.is-particle-mismatch input");
+    await blueField.waitFor();
+    await page.waitForFunction(selector => {
+      const field = document.querySelector(selector);
+      return field && getComputedStyle(field).backgroundColor === "rgb(234, 243, 255)";
+    }, width <= 760 ? ".table-inline-blank.is-particle-mismatch" : ".cloze-field.is-particle-mismatch input");
     await fillBlank(0, "연필");
     await confirm();
 
