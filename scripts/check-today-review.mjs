@@ -123,6 +123,15 @@ try {
     await grade();
     await expectReviewTypography(true);
     assert.equal(await page.locator(".cloze-field.is-correction.is-particle-mismatch").count(), 1);
+    for (const [index, color] of [[0, "rgb(189, 69, 75)"], [1, "rgb(72, 122, 193)"]]) {
+      const field = blankAt(index);
+      await field.focus();
+      const focus = await field.evaluate(input => {
+        const { outlineColor, outlineOffset, outlineWidth, boxShadow } = getComputedStyle(input);
+        return { outlineColor, outlineOffset, outlineWidth, boxShadow };
+      });
+      assert.deepEqual(focus, { outlineColor: color, outlineOffset: "-2px", outlineWidth: "2px", boxShadow: "none" });
+    }
     await blankAt(0).click();
     await page.keyboard.press("ArrowDown");
     assert.equal(await activeBlank(), "1");
